@@ -1,8 +1,8 @@
-﻿using System.Text;
-using AI.DocumentAssistant.Application.Abstractions.AI;
+﻿using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Authentication;
 using AI.DocumentAssistant.Application.Abstractions.Common;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
+using AI.DocumentAssistant.Application.Chats.Services;
 using AI.DocumentAssistant.Application.Services.AI;
 using AI.DocumentAssistant.Application.Services.Authentication;
 using AI.DocumentAssistant.Application.Services.DocumentProcessing;
@@ -12,6 +12,7 @@ using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 namespace AI.DocumentAssistant.Infrastructure.DependencyInjection;
 
@@ -35,13 +36,17 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<ISystemClock, SystemClock>();
 
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
-        services.AddScoped<IOpenAiService, OpenAiService>();
+
+        services.AddHttpClient<IOpenAiService, OpenAiService>();
 
         services.AddScoped<IPdfTextExtractor, PdfPigTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, PdfPigTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, PlainTextDocumentTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, CsvDocumentTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, DocxDocumentTextExtractor>();
+
+        services.Configure<ChatRetrievalOptions>(
+            configuration.GetSection(ChatRetrievalOptions.SectionName));
 
         var jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()!;
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SecretKey));

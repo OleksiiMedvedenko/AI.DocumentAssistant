@@ -1,20 +1,20 @@
 ﻿using System.Text.RegularExpressions;
 using AI.DocumentAssistant.Application.Abstractions.Chats;
 using AI.DocumentAssistant.Domain.Entities;
+using Microsoft.Extensions.Options;
 
 namespace AI.DocumentAssistant.Application.Chats.Services;
 
 public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
 {
-    private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
+    private readonly HashSet<string> _stopWords;
+    private readonly ChatRetrievalOptions _options;
+
+    public KeywordChunkRetrievalService(IOptions<ChatRetrievalOptions> options)
     {
-        "a", "an", "the", "and", "or", "but", "if", "then", "else",
-        "is", "are", "was", "were", "be", "been", "being",
-        "to", "of", "in", "on", "at", "for", "from", "with", "by", "about",
-        "what", "which", "who", "whom", "when", "where", "why", "how",
-        "czy", "co", "jak", "kiedy", "gdzie", "dlaczego", "który", "która", "ktore", "które",
-        "i", "oraz", "lub", "ale", "że", "to", "jest", "są", "na", "w", "z", "do", "po", "od", "za"
-    };
+        _options = options.Value;
+        _stopWords = _options.StopWords.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 
     public IReadOnlyList<DocumentChunk> GetBestMatchingChunks(
         IReadOnlyCollection<DocumentChunk> chunks,
@@ -26,22 +26,18 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
             return [];
         }
 
+        var finalTake = take > 0 ? take : _options.DefaultTake;
+
         if (string.IsNullOrWhiteSpace(question))
         {
-            return chunks
-                .OrderBy(x => x.ChunkIndex)
-                .Take(take)
-                .ToList();
+            return chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
         }
 
         var keywords = ExtractKeywords(question);
 
         if (keywords.Count == 0)
         {
-            return chunks
-                .OrderBy(x => x.ChunkIndex)
-                .Take(take)
-                .ToList();
+            return chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
         }
 
         var ranked = chunks
@@ -56,30 +52,24 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
 
         var best = ranked
             .Where(x => x.Score > 0)
-            .Take(take)
+            .Take(finalTake)
             .Select(x => x.Chunk)
             .OrderBy(x => x.ChunkIndex)
             .ToList();
 
-        if (best.Count > 0)
-        {
-            return best;
-        }
-
-        return chunks
-            .OrderBy(x => x.ChunkIndex)
-            .Take(take)
-            .ToList();
+        return best.Count > 0
+            ? best
+            : chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
     }
 
-    private static HashSet<string> ExtractKeywords(string text)
+    private HashSet<string> ExtractKeywords(string text)
     {
         var matches = Regex.Matches(text.ToLowerInvariant(), @"\p{L}[\p{L}\p{Nd}_-]*");
 
         return matches
             .Select(x => x.Value.Trim())
             .Where(x => x.Length >= 3)
-            .Where(x => !StopWords.Contains(x))
+            .Where(x => !_stopWords.Contains(x))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -106,7 +96,7 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
                     score += 5;
                 }
 
-                if (normalized.Contains(keyword) && normalized.Length < 1200)
+                if (normalized.Length < 1200)
                 {
                     score += 2;
                 }
