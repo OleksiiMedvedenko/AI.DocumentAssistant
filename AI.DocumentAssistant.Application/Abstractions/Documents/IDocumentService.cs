@@ -8,6 +8,7 @@ public interface IDocumentService
     Task<DocumentDto> UploadAsync(IFormFile file, CancellationToken cancellationToken);
     Task<IReadOnlyList<DocumentDto>> GetAllAsync(CancellationToken cancellationToken);
     Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken);
     Task DeleteAsync(Guid documentId, CancellationToken cancellationToken);
     Task<SummarizeResultDto> SummarizeAsync(Guid documentId, CancellationToken cancellationToken);
 }

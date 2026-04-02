@@ -8,6 +8,7 @@ using AI.DocumentAssistant.Application.Services.Authentication;
 using AI.DocumentAssistant.Application.Services.DocumentProcessing;
 using AI.DocumentAssistant.Application.Services.Storage;
 using AI.DocumentAssistant.Application.Services.Time;
+using AI.DocumentAssistant.Infrastructure.BackgroundProcessing;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -44,6 +45,9 @@ public static class InfrastructureServiceRegistration
         services.AddScoped<IDocumentTextExtractor, PlainTextDocumentTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, CsvDocumentTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, DocxDocumentTextExtractor>();
+
+        services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+        services.AddHostedService<QueuedDocumentProcessingBackgroundService>();
 
         services.Configure<ChatRetrievalOptions>(
             configuration.GetSection(ChatRetrievalOptions.SectionName));

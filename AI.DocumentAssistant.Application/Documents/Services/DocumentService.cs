@@ -29,20 +29,20 @@ public sealed class DocumentService : IDocumentService
     private readonly AppDbContext _dbContext;
     private readonly ICurrentUserService _currentUserService;
     private readonly IFileStorageService _fileStorageService;
-    private readonly IDocumentProcessingService _documentProcessingService;
+    private readonly IDocumentProcessingQueue _documentProcessingQueue;
     private readonly IOpenAiService _openAiService;
 
     public DocumentService(
         AppDbContext dbContext,
         ICurrentUserService currentUserService,
         IFileStorageService fileStorageService,
-        IDocumentProcessingService documentProcessingService,
+        IDocumentProcessingQueue documentProcessingQueue,
         IOpenAiService openAiService)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
         _fileStorageService = fileStorageService;
-        _documentProcessingService = documentProcessingService;
+        _documentProcessingQueue = documentProcessingQueue;
         _openAiService = openAiService;
     }
 
@@ -87,7 +87,7 @@ public sealed class DocumentService : IDocumentService
         _dbContext.Documents.Add(document);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        await _documentProcessingService.ProcessAsync(document.Id, cancellationToken);
+        await _documentProcessingQueue.EnqueueAsync(document.Id, cancellationToken);
 
         return new DocumentDto
         {
@@ -142,6 +142,26 @@ public sealed class DocumentService : IDocumentService
         return document ?? throw new NotFoundException("Document not found.");
     }
 
+    public async Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new DocumentStatusDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                Status = x.Status,
+                UploadedAtUtc = x.UploadedAtUtc,
+                ProcessedAtUtc = x.ProcessedAtUtc,
+                ErrorMessage = x.ErrorMessage
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return document ?? throw new NotFoundException("Document not found.");
+    }
+
     public async Task DeleteAsync(Guid documentId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
@@ -169,6 +189,11 @@ public sealed class DocumentService : IDocumentService
         if (document is null)
         {
             throw new NotFoundException("Document not found.");
+        }
+
+        if (document.Status != DocumentStatus.Ready)
+        {
+            throw new BadRequestException("Document is not ready yet.");
         }
 
         if (string.IsNullOrWhiteSpace(document.ExtractedText))

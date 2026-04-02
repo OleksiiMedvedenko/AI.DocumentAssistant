@@ -47,4 +47,11 @@ public sealed class DocumentsController : ControllerBase
     {
         return Ok(await _documentService.SummarizeAsync(id, cancellationToken));
     }
+
+    [HttpGet("{documentId:guid}/status")]
+    public async Task<IActionResult> GetStatus(Guid documentId, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.GetStatusAsync(documentId, cancellationToken);
+        return Ok(result);
+    }
 }
