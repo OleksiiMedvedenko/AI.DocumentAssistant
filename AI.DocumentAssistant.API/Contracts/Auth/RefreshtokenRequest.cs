@@ -1,7 +1,6 @@
-﻿namespace AI.DocumentAssistant.API.Contracts.Auth
+﻿namespace AI.DocumentAssistant.API.Contracts.Auth;
+
+public sealed class RefreshTokenRequest
 {
-    public sealed class RefreshTokenRequest
-    {
-        public string RefreshToken { get; set; } = default!;
-    }
+    public string RefreshToken { get; set; } = default!;
 }

@@ -1,7 +1,6 @@
-﻿namespace AI.DocumentAssistant.Application.Abstractions.Documents
+﻿namespace AI.DocumentAssistant.Application.Abstractions.Documents;
+
+public interface IDocumentChunkingService
 {
-    public interface IDocumentChunkingService
-    {
-        IReadOnlyList<string> Chunk(string text, int maxChunkLength = 2000);
-    }
+    IReadOnlyList<string> Chunk(string text, int chunkSize = 1200, int overlap = 200);
 }

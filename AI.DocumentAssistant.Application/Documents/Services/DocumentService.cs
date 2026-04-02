@@ -8,166 +8,183 @@ using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using System;
 
-namespace AI.DocumentAssistant.Application.Documents.Services
+namespace AI.DocumentAssistant.Application.Documents.Services;
+
+public sealed class DocumentService : IDocumentService
 {
-    public sealed class DocumentService : IDocumentService
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        private readonly AppDbContext _dbContext;
-        private readonly ICurrentUserService _currentUserService;
-        private readonly IFileStorageService _fileStorageService;
-        private readonly IDocumentProcessingService _documentProcessingService;
-        private readonly IOpenAiService _openAiService;
+        ".pdf",
+        ".docx",
+        ".txt",
+        ".md",
+        ".markdown",
+        ".csv",
+        ".json",
+        ".xml",
+        ".log"
+    };
 
-        public DocumentService(
-            AppDbContext dbContext,
-            ICurrentUserService currentUserService,
-            IFileStorageService fileStorageService,
-            IDocumentProcessingService documentProcessingService,
-            IOpenAiService openAiService)
+    private readonly AppDbContext _dbContext;
+    private readonly ICurrentUserService _currentUserService;
+    private readonly IFileStorageService _fileStorageService;
+    private readonly IDocumentProcessingService _documentProcessingService;
+    private readonly IOpenAiService _openAiService;
+
+    public DocumentService(
+        AppDbContext dbContext,
+        ICurrentUserService currentUserService,
+        IFileStorageService fileStorageService,
+        IDocumentProcessingService documentProcessingService,
+        IOpenAiService openAiService)
+    {
+        _dbContext = dbContext;
+        _currentUserService = currentUserService;
+        _fileStorageService = fileStorageService;
+        _documentProcessingService = documentProcessingService;
+        _openAiService = openAiService;
+    }
+
+    public async Task<DocumentDto> UploadAsync(IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file is null)
         {
-            _dbContext = dbContext;
-            _currentUserService = currentUserService;
-            _fileStorageService = fileStorageService;
-            _documentProcessingService = documentProcessingService;
-            _openAiService = openAiService;
+            throw new BadRequestException("File is required.");
         }
 
-
-        public async Task<DocumentDto> UploadAsync(IFormFile file, CancellationToken cancellationToken)
+        if (file.Length == 0)
         {
-            if (file.Length == 0)
-            {
-                throw new BadRequestException("File is empty.");
-            }
-
-            if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new BadRequestException("Only PDF files are allowed.");
-            }
-
-            var userId = _currentUserService.GetUserId();
-            var fileName = $"{Guid.NewGuid():N}.pdf";
-
-            await using var stream = file.OpenReadStream();
-            var storagePath = await _fileStorageService.SaveAsync(stream, fileName, cancellationToken);
-
-            var document = new Document
-            {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                FileName = fileName,
-                OriginalFileName = file.FileName,
-                ContentType = file.ContentType,
-                SizeInBytes = file.Length,
-                StoragePath = storagePath,
-                Status = DocumentStatus.Uploaded,
-                UploadedAtUtc = DateTime.UtcNow
-            };
-
-            _dbContext.Documents.Add(document);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            await _documentProcessingService.ProcessAsync(document.Id, cancellationToken);
-
-            return new DocumentDto
-            {
-                Id = document.Id,
-                OriginalFileName = document.OriginalFileName,
-                ContentType = document.ContentType,
-                SizeInBytes = document.SizeInBytes,
-                Status = document.Status,
-                UploadedAtUtc = document.UploadedAtUtc
-            };
+            throw new BadRequestException("File is empty.");
         }
 
-        public async Task<IReadOnlyCollection<DocumentDto>> GetAllAsync(CancellationToken cancellationToken)
+        var extension = Path.GetExtension(file.FileName);
+        if (string.IsNullOrWhiteSpace(extension) || !AllowedExtensions.Contains(extension))
         {
-            var userId = _currentUserService.GetUserId();
-
-            return await _dbContext.Documents
-                .Where(x => x.UserId == userId)
-                .OrderByDescending(x => x.UploadedAtUtc)
-                .Select(x => new DocumentDto
-                {
-                    Id = x.Id,
-                    OriginalFileName = x.OriginalFileName,
-                    ContentType = x.ContentType,
-                    SizeInBytes = x.SizeInBytes,
-                    Status = x.Status,
-                    UploadedAtUtc = x.UploadedAtUtc
-                })
-                .ToListAsync(cancellationToken);
+            throw new BadRequestException(
+                "Unsupported file type. Allowed: pdf, docx, txt, md, csv, json, xml, log.");
         }
 
-        public async Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken)
+        var userId = _currentUserService.GetUserId();
+        var fileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
+
+        await using var stream = file.OpenReadStream();
+        var storagePath = await _fileStorageService.SaveAsync(stream, fileName, cancellationToken);
+
+        var document = new Document
         {
-            var userId = _currentUserService.GetUserId();
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            FileName = fileName,
+            OriginalFileName = file.FileName,
+            ContentType = file.ContentType ?? "application/octet-stream",
+            SizeInBytes = file.Length,
+            StoragePath = storagePath,
+            Status = DocumentStatus.Uploaded,
+            UploadedAtUtc = DateTime.UtcNow
+        };
 
-            var document = await _dbContext.Documents
-                .Where(x => x.Id == documentId && x.UserId == userId)
-                .Select(x => new DocumentDetailsDto
-                {
-                    Id = x.Id,
-                    OriginalFileName = x.OriginalFileName,
-                    ContentType = x.ContentType,
-                    SizeInBytes = x.SizeInBytes,
-                    Status = x.Status,
-                    Summary = x.Summary,
-                    UploadedAtUtc = x.UploadedAtUtc,
-                    ProcessedAtUtc = x.ProcessedAtUtc,
-                    ErrorMessage = x.ErrorMessage
-                })
-                .FirstOrDefaultAsync(cancellationToken);
+        _dbContext.Documents.Add(document);
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
-            return document ?? throw new NotFoundException("Document not found.");
+        await _documentProcessingService.ProcessAsync(document.Id, cancellationToken);
+
+        return new DocumentDto
+        {
+            Id = document.Id,
+            OriginalFileName = document.OriginalFileName,
+            ContentType = document.ContentType,
+            SizeInBytes = document.SizeInBytes,
+            Status = document.Status,
+            UploadedAtUtc = document.UploadedAtUtc
+        };
+    }
+
+    public async Task<IReadOnlyList<DocumentDto>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        return await _dbContext.Documents
+            .Where(x => x.UserId == userId)
+            .OrderByDescending(x => x.UploadedAtUtc)
+            .Select(x => new DocumentDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                ContentType = x.ContentType,
+                SizeInBytes = x.SizeInBytes,
+                Status = x.Status,
+                UploadedAtUtc = x.UploadedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new DocumentDetailsDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                ContentType = x.ContentType,
+                SizeInBytes = x.SizeInBytes,
+                Status = x.Status,
+                Summary = x.Summary,
+                UploadedAtUtc = x.UploadedAtUtc,
+                ProcessedAtUtc = x.ProcessedAtUtc,
+                ErrorMessage = x.ErrorMessage
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return document ?? throw new NotFoundException("Document not found.");
+    }
+
+    public async Task DeleteAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
         }
 
-        public async Task DeleteAsync(Guid documentId, CancellationToken cancellationToken)
+        _dbContext.Documents.Remove(document);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _fileStorageService.DeleteAsync(document.StoragePath, cancellationToken);
+    }
+
+    public async Task<SummarizeResultDto> SummarizeAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
         {
-            var userId = _currentUserService.GetUserId();
-
-            var document = await _dbContext.Documents
-                .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
-
-            if (document is null)
-            {
-                throw new NotFoundException("Document not found.");
-            }
-
-            _dbContext.Documents.Remove(document);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-            await _fileStorageService.DeleteAsync(document.StoragePath, cancellationToken);
+            throw new NotFoundException("Document not found.");
         }
 
-
-        public async Task<SummarizeResultDto> SummarizeAsync(Guid documentId, CancellationToken cancellationToken)
+        if (string.IsNullOrWhiteSpace(document.ExtractedText))
         {
-            var userId = _currentUserService.GetUserId();
-
-            var document = await _dbContext.Documents
-                .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
-
-            if (document is null)
-            {
-                throw new NotFoundException("Document not found.");
-            }
-
-            if (string.IsNullOrWhiteSpace(document.ExtractedText))
-            {
-                throw new BadRequestException("Document text has not been processed yet.");
-            }
-
-            var summary = await _openAiService.GenerateSummaryAsync(document.ExtractedText, cancellationToken);
-            document.Summary = summary;
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            return new SummarizeResultDto
-            {
-                DocumentId = document.Id,
-                Summary = summary
-            };
+            throw new BadRequestException("Document text has not been processed yet.");
         }
+
+        var summary = await _openAiService.GenerateSummaryAsync(document.ExtractedText, cancellationToken);
+        document.Summary = summary;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new SummarizeResultDto
+        {
+            DocumentId = document.Id,
+            Summary = summary
+        };
     }
 }

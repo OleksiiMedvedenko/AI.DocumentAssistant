@@ -27,18 +27,27 @@ public static class InfrastructureServiceRegistration
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
         services.AddHttpContextAccessor();
-        services.AddScoped<IJwtTokenService, JwtTokenService>();
+
         services.AddScoped<IPasswordHasher, PasswordHasher>();
+        services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
-        services.AddSingleton<IDateTimeProvider, UtcDateTimeProvider>();
+
+        services.AddSingleton<ISystemClock, SystemClock>();
+
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
-        services.AddScoped<IPdfTextExtractor, PdfPigTextExtractor>();
         services.AddScoped<IOpenAiService, OpenAiService>();
+
+        services.AddScoped<IPdfTextExtractor, PdfPigTextExtractor>();
+        services.AddScoped<IDocumentTextExtractor, PdfPigTextExtractor>();
+        services.AddScoped<IDocumentTextExtractor, PlainTextDocumentTextExtractor>();
+        services.AddScoped<IDocumentTextExtractor, CsvDocumentTextExtractor>();
+        services.AddScoped<IDocumentTextExtractor, DocxDocumentTextExtractor>();
 
         var jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()!;
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SecretKey));
 
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        services
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
                 options.TokenValidationParameters = new TokenValidationParameters
