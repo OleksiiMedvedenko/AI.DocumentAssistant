@@ -19,20 +19,39 @@ public sealed class ChatsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Ask(Guid documentId, AskDocumentRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> Ask(
+        Guid documentId,
+        AskDocumentRequest request,
+        CancellationToken cancellationToken)
     {
-        var result = await _chatService.AskAsync(documentId, new AskDocumentDto
-        {
-            ChatSessionId = request.ChatSessionId,
-            Message = request.Message
-        }, cancellationToken);
+        var result = await _chatService.AskAsync(
+            documentId,
+            new AskDocumentDto
+            {
+                ChatSessionId = request.ChatSessionId,
+                Message = request.Message
+            },
+            cancellationToken);
 
         return Ok(result);
     }
 
     [HttpGet("messages")]
-    public async Task<IActionResult> GetMessages(Guid documentId, [FromQuery] Guid chatSessionId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetMessages(
+        Guid documentId,
+        [FromQuery] Guid chatSessionId,
+        CancellationToken cancellationToken)
     {
-        return Ok(await _chatService.GetMessagesAsync(documentId, chatSessionId, cancellationToken));
+        var result = await _chatService.GetMessagesAsync(documentId, chatSessionId, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("sessions")]
+    public async Task<IActionResult> GetSessions(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _chatService.GetSessionsAsync(documentId, cancellationToken);
+        return Ok(result);
     }
 }
