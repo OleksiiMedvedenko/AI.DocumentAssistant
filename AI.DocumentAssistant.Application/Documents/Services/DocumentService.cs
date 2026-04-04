@@ -1,4 +1,5 @@
-﻿using AI.DocumentAssistant.Application.Abstractions.AI;
+﻿using System.Text.Json;
+using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Common;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Common.Exceptions;
@@ -191,17 +192,9 @@ public sealed class DocumentService : IDocumentService
             throw new NotFoundException("Document not found.");
         }
 
-        if (document.Status != DocumentStatus.Ready)
-        {
-            throw new BadRequestException("Document is not ready yet.");
-        }
+        EnsureReadyForAi(document);
 
-        if (string.IsNullOrWhiteSpace(document.ExtractedText))
-        {
-            throw new BadRequestException("Document text has not been processed yet.");
-        }
-
-        var summary = await _openAiService.GenerateSummaryAsync(document.ExtractedText, cancellationToken);
+        var summary = await _openAiService.GenerateSummaryAsync(document.ExtractedText!, cancellationToken);
         document.Summary = summary;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -213,7 +206,7 @@ public sealed class DocumentService : IDocumentService
         };
     }
 
-    public async Task<ExtractDocumentResultDto> ExtractAsync(
+    public async Task<ExtractedDataDto> ExtractAsync(
         Guid documentId,
         ExtractDocumentRequestDto request,
         CancellationToken cancellationToken)
@@ -228,6 +221,104 @@ public sealed class DocumentService : IDocumentService
             throw new NotFoundException("Document not found.");
         }
 
+        EnsureReadyForAi(document);
+
+        var extractionType = string.IsNullOrWhiteSpace(request.ExtractionType)
+            ? "generic"
+            : request.ExtractionType.Trim();
+
+        var fields = request.Fields
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var context = fields.Count > 0
+            ? document.ExtractedText! + "\n\nREQUESTED FIELDS:\n- " + string.Join("\n- ", fields)
+            : document.ExtractedText!;
+
+        var jsonResult = await _openAiService.ExtractStructuredDataAsync(
+            context,
+            extractionType,
+            cancellationToken);
+
+        var extraction = new ExtractedData
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            ExtractionType = extractionType,
+            JsonResult = jsonResult,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.ExtractedData.Add(extraction);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new ExtractedDataDto
+        {
+            Id = extraction.Id,
+            DocumentId = extraction.DocumentId,
+            ExtractionType = extraction.ExtractionType,
+            Fields = fields,
+            JsonResult = extraction.JsonResult,
+            CreatedAtUtc = extraction.CreatedAtUtc
+        };
+    }
+
+    public async Task<IReadOnlyList<ExtractedDataDto>> GetExtractionsAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var documentExists = await _dbContext.Documents
+            .AnyAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (!documentExists)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        return await _dbContext.ExtractedData
+            .Where(x => x.DocumentId == documentId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => new ExtractedDataDto
+            {
+                Id = x.Id,
+                DocumentId = x.DocumentId,
+                ExtractionType = x.ExtractionType,
+                Fields = Array.Empty<string>(),
+                JsonResult = x.JsonResult,
+                CreatedAtUtc = x.CreatedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<ExtractedDataDto> GetExtractionByIdAsync(
+        Guid documentId,
+        Guid extractionId,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var extraction = await _dbContext.ExtractedData
+            .Where(x => x.Id == extractionId && x.DocumentId == documentId && x.Document.UserId == userId)
+            .Select(x => new ExtractedDataDto
+            {
+                Id = x.Id,
+                DocumentId = x.DocumentId,
+                ExtractionType = x.ExtractionType,
+                Fields = Array.Empty<string>(),
+                JsonResult = x.JsonResult,
+                CreatedAtUtc = x.CreatedAtUtc
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return extraction ?? throw new NotFoundException("Extraction not found.");
+    }
+
+    private static void EnsureReadyForAi(Document document)
+    {
         if (document.Status != DocumentStatus.Ready)
         {
             throw new BadRequestException("Document is not ready yet.");
@@ -237,25 +328,5 @@ public sealed class DocumentService : IDocumentService
         {
             throw new BadRequestException("Document text has not been processed yet.");
         }
-
-        var extractionType = string.IsNullOrWhiteSpace(request.ExtractionType)
-            ? "generic"
-            : request.ExtractionType.Trim();
-
-        var promptSuffix = request.Fields.Count > 0
-            ? $"\nREQUESTED FIELDS:\n- {string.Join("\n- ", request.Fields)}"
-            : "\nREQUESTED FIELDS:\n- infer the most relevant fields dynamically";
-
-        var rawJson = await _openAiService.ExtractStructuredDataAsync(
-            document.ExtractedText + promptSuffix,
-            extractionType,
-            cancellationToken);
-
-        return new ExtractDocumentResultDto
-        {
-            DocumentId = document.Id,
-            ExtractionType = extractionType,
-            RawJson = rawJson
-        };
     }
 }

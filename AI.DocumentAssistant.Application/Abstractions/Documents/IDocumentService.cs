@@ -11,8 +11,18 @@ public interface IDocumentService
     Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken);
     Task DeleteAsync(Guid documentId, CancellationToken cancellationToken);
     Task<SummarizeResultDto> SummarizeAsync(Guid documentId, CancellationToken cancellationToken);
-    Task<ExtractDocumentResultDto> ExtractAsync(
+
+    Task<ExtractedDataDto> ExtractAsync(
         Guid documentId,
         ExtractDocumentRequestDto request,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ExtractedDataDto>> GetExtractionsAsync(
+        Guid documentId,
+        CancellationToken cancellationToken);
+
+    Task<ExtractedDataDto> GetExtractionByIdAsync(
+        Guid documentId,
+        Guid extractionId,
         CancellationToken cancellationToken);
 }

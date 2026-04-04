@@ -44,6 +44,23 @@ public sealed class DocumentsController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("{documentId:guid}/extractions")]
+    public async Task<IActionResult> GetExtractions(Guid documentId, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.GetExtractionsAsync(documentId, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("{documentId:guid}/extractions/{extractionId:guid}")]
+    public async Task<IActionResult> GetExtractionById(
+        Guid documentId,
+        Guid extractionId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _documentService.GetExtractionByIdAsync(documentId, extractionId, cancellationToken);
+        return Ok(result);
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
