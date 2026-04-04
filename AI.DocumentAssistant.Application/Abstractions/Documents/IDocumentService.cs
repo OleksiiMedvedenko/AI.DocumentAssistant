@@ -25,4 +25,9 @@ public interface IDocumentService
         Guid documentId,
         Guid extractionId,
         CancellationToken cancellationToken);
+
+    Task<CompareDocumentsResultDto> CompareAsync(
+        Guid firstDocumentId,
+        CompareDocumentsRequestDto request,
+        CancellationToken cancellationToken);
 }

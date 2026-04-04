@@ -329,4 +329,49 @@ public sealed class DocumentService : IDocumentService
             throw new BadRequestException("Document text has not been processed yet.");
         }
     }
+
+    public async Task<CompareDocumentsResultDto> CompareAsync(
+    Guid firstDocumentId,
+    CompareDocumentsRequestDto request,
+    CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        if (firstDocumentId == request.SecondDocumentId)
+        {
+            throw new BadRequestException("You must choose two different documents.");
+        }
+
+        var documents = await _dbContext.Documents
+            .Where(x =>
+                x.UserId == userId &&
+                (x.Id == firstDocumentId || x.Id == request.SecondDocumentId))
+            .ToListAsync(cancellationToken);
+
+        var firstDocument = documents.FirstOrDefault(x => x.Id == firstDocumentId);
+        var secondDocument = documents.FirstOrDefault(x => x.Id == request.SecondDocumentId);
+
+        if (firstDocument is null || secondDocument is null)
+        {
+            throw new NotFoundException("One or both documents were not found.");
+        }
+
+        EnsureReadyForAi(firstDocument);
+        EnsureReadyForAi(secondDocument);
+
+        var result = await _openAiService.CompareDocumentsAsync(
+            firstDocument.ExtractedText!,
+            secondDocument.ExtractedText!,
+            request.Prompt,
+            cancellationToken);
+
+        return new CompareDocumentsResultDto
+        {
+            FirstDocumentId = firstDocument.Id,
+            SecondDocumentId = secondDocument.Id,
+            FirstDocumentName = firstDocument.OriginalFileName,
+            SecondDocumentName = secondDocument.OriginalFileName,
+            Result = result
+        };
+    }
 }

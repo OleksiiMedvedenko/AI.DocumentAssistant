@@ -208,4 +208,40 @@ public sealed class OpenAiService : IOpenAiService
             ? normalized
             : normalized[..maxLength];
     }
+
+    public async Task<string> CompareDocumentsAsync(
+    string firstDocumentText,
+    string secondDocumentText,
+    string? comparisonPrompt,
+    CancellationToken cancellationToken)
+    {
+        var safeFirst = TrimInput(firstDocumentText, 14000);
+        var safeSecond = TrimInput(secondDocumentText, 14000);
+        var safePrompt = string.IsNullOrWhiteSpace(comparisonPrompt)
+            ? "Compare the two documents. Focus on similarities, differences, missing information, and the most important conclusions."
+            : comparisonPrompt.Trim();
+
+        var request = new
+        {
+            model = _options.Model,
+            temperature = 0.1,
+            messages = new object[]
+            {
+            new
+            {
+                role = "developer",
+                content =
+                    "You compare two documents accurately. Return plain text only. Structure the answer with: Summary, Similarities, Differences, Missing or conflicting information, Conclusion."
+            },
+            new
+            {
+                role = "user",
+                content =
+                    $"COMPARISON TASK:\n{safePrompt}\n\nDOCUMENT A:\n{safeFirst}\n\nDOCUMENT B:\n{safeSecond}"
+            }
+            }
+        };
+
+        return await SendChatCompletionAsync(request, cancellationToken);
+    }
 }

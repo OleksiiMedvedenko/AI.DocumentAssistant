@@ -91,4 +91,22 @@ public sealed class DocumentsController : ControllerBase
 
         return Ok(result);
     }
+
+    [HttpPost("{id:guid}/compare")]
+    public async Task<IActionResult> Compare(
+    Guid id,
+    [FromBody] CompareDocumentsRequest request,
+    CancellationToken cancellationToken)
+    {
+        var result = await _documentService.CompareAsync(
+            id,
+            new CompareDocumentsRequestDto
+            {
+                SecondDocumentId = request.SecondDocumentId,
+                Prompt = request.Prompt
+            },
+            cancellationToken);
+
+        return Ok(result);
+    }
 }
