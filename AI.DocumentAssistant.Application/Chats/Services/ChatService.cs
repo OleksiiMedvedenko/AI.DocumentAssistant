@@ -122,7 +122,11 @@ public sealed class ChatService : IChatService
 
         _dbContext.ChatMessages.Add(userMessage);
 
-        var answer = await _openAiService.AnswerQuestionAsync(context, normalizedMessage, cancellationToken);
+        var answer = await _openAiService.AnswerQuestionAsync(
+            context,
+            normalizedMessage,
+            dto.Language,
+            cancellationToken);
 
         var assistantMessage = new ChatMessage
         {

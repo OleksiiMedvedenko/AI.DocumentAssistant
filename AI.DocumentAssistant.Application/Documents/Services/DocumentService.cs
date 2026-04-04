@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using AI.DocumentAssistant.Application.Abstractions.AI;
+﻿using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Common;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Common.Exceptions;
@@ -7,8 +6,10 @@ using AI.DocumentAssistant.Application.Documents.Dtos;
 using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
+using Azure.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace AI.DocumentAssistant.Application.Documents.Services;
 
@@ -180,7 +181,10 @@ public sealed class DocumentService : IDocumentService
         await _fileStorageService.DeleteAsync(document.StoragePath, cancellationToken);
     }
 
-    public async Task<SummarizeResultDto> SummarizeAsync(Guid documentId, CancellationToken cancellationToken)
+    public async Task<SummarizeResultDto> SummarizeAsync(
+        Guid documentId,
+        SummarizeDocumentRequestDto request,
+        CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
 
@@ -194,7 +198,11 @@ public sealed class DocumentService : IDocumentService
 
         EnsureReadyForAi(document);
 
-        var summary = await _openAiService.GenerateSummaryAsync(document.ExtractedText!, cancellationToken);
+        var summary = await _openAiService.GenerateSummaryAsync(
+            document.ExtractedText!,
+            request.Language,
+            cancellationToken);
+
         document.Summary = summary;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -238,9 +246,10 @@ public sealed class DocumentService : IDocumentService
             : document.ExtractedText!;
 
         var jsonResult = await _openAiService.ExtractStructuredDataAsync(
-            context,
-            extractionType,
-            cancellationToken);
+           context,
+           extractionType,
+           request.Language,
+           cancellationToken);
 
         var extraction = new ExtractedData
         {
@@ -363,6 +372,7 @@ public sealed class DocumentService : IDocumentService
             firstDocument.ExtractedText!,
             secondDocument.ExtractedText!,
             request.Prompt,
+            request.Language,
             cancellationToken);
 
         return new CompareDocumentsResultDto

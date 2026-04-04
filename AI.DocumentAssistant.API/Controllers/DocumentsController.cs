@@ -69,9 +69,18 @@ public sealed class DocumentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/summarize")]
-    public async Task<IActionResult> Summarize(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Summarize(
+        Guid id,
+        [FromBody] SummarizeDocumentRequest? request,
+        CancellationToken cancellationToken)
     {
-        return Ok(await _documentService.SummarizeAsync(id, cancellationToken));
+        return Ok(await _documentService.SummarizeAsync(
+            id,
+            new SummarizeDocumentRequestDto
+            {
+                Language = request?.Language
+            },
+            cancellationToken));
     }
 
     [HttpPost("{id:guid}/extract")]
@@ -85,7 +94,8 @@ public sealed class DocumentsController : ControllerBase
             new ExtractDocumentRequestDto
             {
                 ExtractionType = request.ExtractionType,
-                Fields = request.Fields
+                Fields = request.Fields,
+                Language = request.Language
             },
             cancellationToken);
 
@@ -94,16 +104,17 @@ public sealed class DocumentsController : ControllerBase
 
     [HttpPost("{id:guid}/compare")]
     public async Task<IActionResult> Compare(
-    Guid id,
-    [FromBody] CompareDocumentsRequest request,
-    CancellationToken cancellationToken)
+        Guid id,
+        [FromBody] CompareDocumentsRequest request,
+        CancellationToken cancellationToken)
     {
         var result = await _documentService.CompareAsync(
             id,
             new CompareDocumentsRequestDto
             {
                 SecondDocumentId = request.SecondDocumentId,
-                Prompt = request.Prompt
+                Prompt = request.Prompt,
+                Language = request.Language
             },
             cancellationToken);
 

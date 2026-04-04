@@ -4,5 +4,6 @@
     {
         public Guid? ChatSessionId { get; set; }
         public string Message { get; set; } = default!;
+        public string? Language { get; set; }
     }
 }

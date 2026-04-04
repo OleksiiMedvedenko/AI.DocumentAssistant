@@ -22,40 +22,13 @@ public sealed class OpenAiService : IOpenAiService
             new AuthenticationHeaderValue("Bearer", _options.ApiKey);
     }
 
-    public async Task<string> GenerateSummaryAsync(string text, CancellationToken cancellationToken)
-    {
-        var safeText = TrimInput(text, 18000);
-
-        var request = new
-        {
-            model = _options.Model,
-            temperature = _options.Temperature,
-            messages = new object[]
-            {
-                new
-                {
-                    role = "developer",
-                    content = "You summarize documents clearly and accurately. Return plain text only."
-                },
-                new
-                {
-                    role = "user",
-                    content =
-                        $"Summarize the following document in a concise but useful way. Include the main purpose, key points, and notable facts.\n\nDOCUMENT:\n{safeText}"
-                }
-            }
-        };
-
-        return await SendChatCompletionAsync(request, cancellationToken);
-    }
-
-    public async Task<string> AnswerQuestionAsync(
-        string documentContext,
-        string question,
+    public async Task<string> GenerateSummaryAsync(
+        string text,
+        string? language,
         CancellationToken cancellationToken)
     {
-        var safeContext = TrimInput(documentContext, 20000);
-        var safeQuestion = question?.Trim() ?? string.Empty;
+        var safeText = TrimInput(text, 18000);
+        var languageInstruction = BuildLanguageInstruction(language);
 
         var request = new
         {
@@ -66,14 +39,39 @@ public sealed class OpenAiService : IOpenAiService
                 new
                 {
                     role = "developer",
-                    content =
-                        "You are an AI assistant that answers questions about a document.\n\n" +
-                        "Rules:\n" +
-                        "- Use ONLY the provided document context.\n" +
-                        "- If the answer is not clearly present, say that it is not found in the document.\n" +
-                        "- Do NOT guess or assume.\n" +
-                        "- Prefer exact facts over interpretation.\n" +
-                        "- Keep answers concise and relevant.\n"
+                    content = BuildSummaryDeveloperPrompt(languageInstruction)
+                },
+                new
+                {
+                    role = "user",
+                    content = BuildSummaryUserPrompt(safeText)
+                }
+            }
+        };
+
+        return await SendChatCompletionAsync(request, cancellationToken);
+    }
+
+    public async Task<string> AnswerQuestionAsync(
+        string documentContext,
+        string question,
+        string? language,
+        CancellationToken cancellationToken)
+    {
+        var safeContext = TrimInput(documentContext, 20000);
+        var safeQuestion = question?.Trim() ?? string.Empty;
+        var languageInstruction = BuildLanguageInstruction(language, safeQuestion);
+
+        var request = new
+        {
+            model = _options.Model,
+            temperature = 0.1,
+            messages = new object[]
+            {
+                new
+                {
+                    role = "developer",
+                    content = BuildQuestionAnsweringDeveloperPrompt(languageInstruction)
                 },
                 new
                 {
@@ -90,10 +88,12 @@ public sealed class OpenAiService : IOpenAiService
     public async Task<string> ExtractStructuredDataAsync(
         string documentContext,
         string extractionType,
+        string? language,
         CancellationToken cancellationToken)
     {
         var safeContext = TrimInput(documentContext, 18000);
         var safeType = string.IsNullOrWhiteSpace(extractionType) ? "generic" : extractionType.Trim();
+        var languageInstruction = BuildLanguageInstruction(language, safeType);
 
         var request = new
         {
@@ -129,13 +129,54 @@ public sealed class OpenAiService : IOpenAiService
                 {
                     role = "developer",
                     content =
-                        "Extract structured information from the document. Return valid JSON matching the schema."
+                        "Extract structured information from the document. Return valid JSON matching the schema. " +
+                        "Use only information supported by the document. " +
+                        "Do not invent missing values. " +
+                        $"The 'summary' field should follow this rule: {languageInstruction}"
                 },
                 new
                 {
                     role = "user",
                     content =
                         $"EXTRACTION TYPE: {safeType}\n\nDOCUMENT:\n{safeContext}"
+                }
+            }
+        };
+
+        return await SendChatCompletionAsync(request, cancellationToken);
+    }
+
+    public async Task<string> CompareDocumentsAsync(
+        string firstDocumentText,
+        string secondDocumentText,
+        string? comparisonPrompt,
+        string? language,
+        CancellationToken cancellationToken)
+    {
+        var safeFirst = TrimInput(firstDocumentText, 14000);
+        var safeSecond = TrimInput(secondDocumentText, 14000);
+        var safePrompt = string.IsNullOrWhiteSpace(comparisonPrompt)
+            ? "Compare the two documents. Focus on similarities, differences, missing information, and the most important conclusions."
+            : comparisonPrompt.Trim();
+
+        var languageInstruction = BuildLanguageInstruction(language, safePrompt);
+
+        var request = new
+        {
+            model = _options.Model,
+            temperature = 0.1,
+            messages = new object[]
+            {
+                new
+                {
+                    role = "developer",
+                    content = BuildComparisonDeveloperPrompt(languageInstruction)
+                },
+                new
+                {
+                    role = "user",
+                    content =
+                        $"COMPARISON TASK:\n{safePrompt}\n\nDOCUMENT A:\n{safeFirst}\n\nDOCUMENT B:\n{safeSecond}"
                 }
             }
         };
@@ -159,7 +200,6 @@ public sealed class OpenAiService : IOpenAiService
         }
 
         using var json = JsonDocument.Parse(content);
-
         var root = json.RootElement;
 
         var choices = root.GetProperty("choices");
@@ -188,7 +228,7 @@ public sealed class OpenAiService : IOpenAiService
                 {
                     if (item.TryGetProperty("text", out var textPart))
                     {
-                        sb.AppendLine(textPart.GetString());
+                        sb.Append(textPart.GetString());
                     }
                 }
 
@@ -202,6 +242,85 @@ public sealed class OpenAiService : IOpenAiService
         throw new InvalidOperationException("OpenAI response did not contain message content.");
     }
 
+    private static string BuildSummaryDeveloperPrompt(string languageInstruction)
+    {
+        return
+            "You summarize documents clearly and accurately. Return plain text only. " +
+            "Do not invent facts. " +
+            "Prefer concrete facts over generic statements. " +
+            "Focus on the most important information that is explicitly present in the document. " +
+            "When the document looks like a CV or resume, prioritize the following when present: current or most recent role, most recent employer, employment dates, education, skills, certifications, and languages. " +
+            "If dates are present, include them when they help explain the timeline. " +
+            "If the document contains current employment indicators such as 'present', 'current', 'nadal', 'до тепер', include that fact clearly. " +
+            "Do not add information that is not supported by the document. " +
+            languageInstruction;
+    }
+
+    private static string BuildSummaryUserPrompt(string safeText)
+    {
+        return
+            "Summarize the following document in a concise but useful way.\n" +
+            "Focus on concrete facts that are explicitly present in the document.\n" +
+            "Avoid generic wording.\n" +
+            "If this is a CV or resume, make sure to include when present:\n" +
+            "- current or most recent role\n" +
+            "- most recent employer\n" +
+            "- employment dates and whether the role is current\n" +
+            "- earlier relevant experience\n" +
+            "- education\n" +
+            "- key skills\n" +
+            "- languages or certifications\n\n" +
+            $"DOCUMENT:\n{safeText}";
+    }
+
+    private static string BuildQuestionAnsweringDeveloperPrompt(string languageInstruction)
+    {
+        return
+            "You are an AI assistant that answers questions about a document. " +
+            "Use the provided document context as the primary source. " +
+            "Do not invent facts that are not supported by the document. " +
+            "If the answer is explicitly stated in the document, answer directly. " +
+            "If the answer is not stated directly but can be reasonably inferred from the document, you may provide an inference, but you must clearly label it as an inference. " +
+            "When giving an inference, briefly mention which part of the document supports it. " +
+            "If the document does not contain enough information even for a reasonable inference, say that it is not found in the document. " +
+            "Prefer exact facts over broad interpretation. " +
+            "Keep answers concise, relevant, and honest about uncertainty. " +
+            languageInstruction;
+    }
+
+    private static string BuildComparisonDeveloperPrompt(string languageInstruction)
+    {
+        return
+            "You compare two documents accurately. Return plain text only. " +
+            "Structure the answer with: Summary, Similarities, Differences, Missing or conflicting information, Conclusion. " +
+            "Prefer concrete facts over generic statements. " +
+            "Do not invent facts that are not supported by the documents. " +
+            "When useful, mention dates, names, roles, quantities, and explicit factual differences. " +
+            languageInstruction;
+    }
+
+    private static string BuildLanguageInstruction(string? language, string? fallbackUserText = null)
+    {
+        if (!string.IsNullOrWhiteSpace(language))
+        {
+            return language.Trim().ToLowerInvariant() switch
+            {
+                "en" => "Respond in English.",
+                "pl" => "Respond in Polish.",
+                "ua" => "Respond in Ukrainian.",
+                "uk" => "Respond in Ukrainian.",
+                _ => $"Respond in the language indicated by this code if possible: {language.Trim()}."
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(fallbackUserText))
+        {
+            return "Respond in the same language as the user's request.";
+        }
+
+        return "Respond in English.";
+    }
+
     private static string TrimInput(string input, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(input))
@@ -213,41 +332,5 @@ public sealed class OpenAiService : IOpenAiService
         return normalized.Length <= maxLength
             ? normalized
             : normalized[..maxLength];
-    }
-
-    public async Task<string> CompareDocumentsAsync(
-    string firstDocumentText,
-    string secondDocumentText,
-    string? comparisonPrompt,
-    CancellationToken cancellationToken)
-    {
-        var safeFirst = TrimInput(firstDocumentText, 14000);
-        var safeSecond = TrimInput(secondDocumentText, 14000);
-        var safePrompt = string.IsNullOrWhiteSpace(comparisonPrompt)
-            ? "Compare the two documents. Focus on similarities, differences, missing information, and the most important conclusions."
-            : comparisonPrompt.Trim();
-
-        var request = new
-        {
-            model = _options.Model,
-            temperature = 0.1,
-            messages = new object[]
-            {
-            new
-            {
-                role = "developer",
-                content =
-                    "You compare two documents accurately. Return plain text only. Structure the answer with: Summary, Similarities, Differences, Missing or conflicting information, Conclusion."
-            },
-            new
-            {
-                role = "user",
-                content =
-                    $"COMPARISON TASK:\n{safePrompt}\n\nDOCUMENT A:\n{safeFirst}\n\nDOCUMENT B:\n{safeSecond}"
-            }
-            }
-        };
-
-        return await SendChatCompletionAsync(request, cancellationToken);
     }
 }
