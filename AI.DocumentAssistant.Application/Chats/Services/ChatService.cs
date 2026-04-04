@@ -107,10 +107,9 @@ public sealed class ChatService : IChatService
             priorUserMessages,
             take: _retrievalOptions.DefaultTake);
 
-        var context = BuildContext(
-            bestChunks,
-            document.ExtractedText!,
-            _retrievalOptions.MaxContextCharacters);
+        var context = bestChunks.Count < 3
+            ? document.ExtractedText!
+            : BuildContext(bestChunks, document.ExtractedText!, _retrievalOptions.MaxContextCharacters);
 
         var userMessage = new ChatMessage
         {

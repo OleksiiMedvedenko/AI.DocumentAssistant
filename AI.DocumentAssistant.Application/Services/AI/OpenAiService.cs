@@ -67,7 +67,13 @@ public sealed class OpenAiService : IOpenAiService
                 {
                     role = "developer",
                     content =
-                        "You answer questions using ONLY the provided document context. If the answer is not in the context, say that the document does not contain enough information."
+                        "You are an AI assistant that answers questions about a document.\n\n" +
+                        "Rules:\n" +
+                        "- Use ONLY the provided document context.\n" +
+                        "- If the answer is not clearly present, say that it is not found in the document.\n" +
+                        "- Do NOT guess or assume.\n" +
+                        "- Prefer exact facts over interpretation.\n" +
+                        "- Keep answers concise and relevant.\n"
                 },
                 new
                 {
