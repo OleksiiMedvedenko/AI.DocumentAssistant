@@ -53,6 +53,17 @@ public class Program
         builder.Services.AddApplicationServices();
         builder.Services.AddInfrastructure(builder.Configuration);
 
+        builder.Services.AddCors(options =>
+        {
+            options.AddPolicy("Frontend", policy =>
+            {
+                policy
+                    .WithOrigins("http://localhost:5173")
+                    .AllowAnyHeader()
+                    .AllowAnyMethod();
+            });
+        });
+
         var app = builder.Build();
 
         using (var scope = app.Services.CreateScope())
@@ -77,6 +88,8 @@ public class Program
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();
+
+        app.UseCors("Frontend");
 
         app.Run();
     }
