@@ -19,6 +19,7 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
     public IReadOnlyList<DocumentChunk> GetBestMatchingChunks(
         IReadOnlyCollection<DocumentChunk> chunks,
         string question,
+        IReadOnlyCollection<string>? chatHistory = null,
         int take = 6)
     {
         if (chunks.Count == 0)
@@ -27,24 +28,21 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
         }
 
         var finalTake = take > 0 ? take : _options.DefaultTake;
-
-        if (string.IsNullOrWhiteSpace(question))
-        {
-            return chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
-        }
-
-        var keywords = ExtractKeywords(question);
+        var combinedQuery = BuildCombinedQuery(question, chatHistory);
+        var keywords = ExtractKeywords(combinedQuery);
 
         if (keywords.Count == 0)
         {
             return chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
         }
 
+        var phraseBoostTerms = ExtractPhraseBoostTerms(question);
+
         var ranked = chunks
             .Select(chunk => new
             {
                 Chunk = chunk,
-                Score = CalculateScore(chunk.Text, keywords)
+                Score = CalculateScore(chunk.Text, keywords, phraseBoostTerms)
             })
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.Chunk.ChunkIndex)
@@ -54,12 +52,32 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
             .Where(x => x.Score > 0)
             .Take(finalTake)
             .Select(x => x.Chunk)
-            .OrderBy(x => x.ChunkIndex)
             .ToList();
 
-        return best.Count > 0
-            ? best
-            : chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
+        if (best.Count == 0)
+        {
+            best = chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
+        }
+
+        if (_options.IncludeNeighborChunks)
+        {
+            best = ExpandWithNeighbors(chunks, best, finalTake);
+        }
+
+        return best
+            .OrderBy(x => x.ChunkIndex)
+            .ToList();
+    }
+
+    private string BuildCombinedQuery(string question, IReadOnlyCollection<string>? chatHistory)
+    {
+        if (chatHistory is null || chatHistory.Count == 0)
+        {
+            return question;
+        }
+
+        var history = string.Join(" ", chatHistory);
+        return $"{history} {question}";
     }
 
     private HashSet<string> ExtractKeywords(string text)
@@ -73,7 +91,24 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static int CalculateScore(string chunkText, HashSet<string> keywords)
+    private static List<string> ExtractPhraseBoostTerms(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return [];
+        }
+
+        return Regex.Matches(text.Trim(), "\"([^\"]+)\"")
+            .Select(x => x.Groups[1].Value.Trim())
+            .Where(x => x.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static int CalculateScore(
+        string chunkText,
+        HashSet<string> keywords,
+        IReadOnlyCollection<string> phraseBoostTerms)
     {
         if (string.IsNullOrWhiteSpace(chunkText))
         {
@@ -82,25 +117,45 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
 
         var normalized = chunkText.ToLowerInvariant();
         var score = 0;
+        var matchedKeywordCount = 0;
 
         foreach (var keyword in keywords)
         {
-            var occurrences = CountOccurrences(normalized, keyword.ToLowerInvariant());
+            var loweredKeyword = keyword.ToLowerInvariant();
+            var occurrences = CountOccurrences(normalized, loweredKeyword);
 
-            if (occurrences > 0)
+            if (occurrences <= 0)
             {
-                score += occurrences * 10;
-
-                if (normalized.Contains($"{keyword}:"))
-                {
-                    score += 5;
-                }
-
-                if (normalized.Length < 1200)
-                {
-                    score += 2;
-                }
+                continue;
             }
+
+            matchedKeywordCount++;
+            score += occurrences * 8;
+
+            if (normalized.Contains($"{loweredKeyword}:"))
+            {
+                score += 6;
+            }
+
+            if (normalized.Contains($"{loweredKeyword}\n") || normalized.StartsWith(loweredKeyword + " "))
+            {
+                score += 3;
+            }
+        }
+
+        score += matchedKeywordCount * 5;
+
+        foreach (var phrase in phraseBoostTerms)
+        {
+            if (normalized.Contains(phrase.ToLowerInvariant()))
+            {
+                score += 20;
+            }
+        }
+
+        if (normalized.Length <= 1000)
+        {
+            score += 2;
         }
 
         return score;
@@ -118,5 +173,44 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
         }
 
         return count;
+    }
+
+    private static List<DocumentChunk> ExpandWithNeighbors(
+        IReadOnlyCollection<DocumentChunk> allChunks,
+        IReadOnlyCollection<DocumentChunk> bestChunks,
+        int targetCount)
+    {
+        var byIndex = allChunks.ToDictionary(x => x.ChunkIndex);
+        var selected = new HashSet<int>(bestChunks.Select(x => x.ChunkIndex));
+
+        foreach (var chunk in bestChunks.OrderBy(x => x.ChunkIndex))
+        {
+            if (selected.Count >= targetCount)
+            {
+                break;
+            }
+
+            if (byIndex.TryGetValue(chunk.ChunkIndex - 1, out var previous))
+            {
+                selected.Add(previous.ChunkIndex);
+            }
+
+            if (selected.Count >= targetCount)
+            {
+                break;
+            }
+
+            if (byIndex.TryGetValue(chunk.ChunkIndex + 1, out var next))
+            {
+                selected.Add(next.ChunkIndex);
+            }
+        }
+
+        return selected
+            .Where(byIndex.ContainsKey)
+            .Select(index => byIndex[index])
+            .OrderBy(x => x.ChunkIndex)
+            .Take(targetCount)
+            .ToList();
     }
 }

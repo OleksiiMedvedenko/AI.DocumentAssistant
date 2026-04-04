@@ -7,6 +7,7 @@ using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace AI.DocumentAssistant.Application.Chats.Services;
 
@@ -16,17 +17,20 @@ public sealed class ChatService : IChatService
     private readonly ICurrentUserService _currentUserService;
     private readonly IOpenAiService _openAiService;
     private readonly IChunkRetrievalService _chunkRetrievalService;
+    private readonly ChatRetrievalOptions _retrievalOptions;
 
     public ChatService(
         AppDbContext dbContext,
         ICurrentUserService currentUserService,
         IOpenAiService openAiService,
-        IChunkRetrievalService chunkRetrievalService)
+        IChunkRetrievalService chunkRetrievalService,
+        IOptions<ChatRetrievalOptions> retrievalOptions)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
         _openAiService = openAiService;
         _chunkRetrievalService = chunkRetrievalService;
+        _retrievalOptions = retrievalOptions.Value;
     }
 
     public async Task<AskDocumentResultDto> AskAsync(Guid documentId, AskDocumentDto dto, CancellationToken cancellationToken)
@@ -83,6 +87,22 @@ public sealed class ChatService : IChatService
             _dbContext.ChatSessions.Add(session);
         }
 
+        var priorUserMessages = session.Messages?
+            .Where(x => x.Role == ChatRole.User)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(_retrievalOptions.HistoryMessagesToUse)
+            .Select(x => x.Content)
+            .Reverse()
+            .ToList() ?? new List<string>();
+
+        var bestChunks = _chunkRetrievalService.GetBestMatchingChunks(
+            document.Chunks.ToList(),
+            dto.Message,
+            priorUserMessages,
+            take: _retrievalOptions.DefaultTake);
+
+        var context = BuildContext(bestChunks, document.ExtractedText!, _retrievalOptions.MaxContextCharacters);
+
         var userMessage = new ChatMessage
         {
             Id = Guid.NewGuid(),
@@ -93,15 +113,6 @@ public sealed class ChatService : IChatService
         };
 
         _dbContext.ChatMessages.Add(userMessage);
-
-        var bestChunks = _chunkRetrievalService.GetBestMatchingChunks(
-            document.Chunks.ToList(),
-            dto.Message,
-            take: 6);
-
-        var context = bestChunks.Count > 0
-            ? string.Join("\n\n---\n\n", bestChunks.Select(x => x.Text))
-            : document.ExtractedText!;
 
         var answer = await _openAiService.AnswerQuestionAsync(context, dto.Message, cancellationToken);
 
@@ -202,6 +213,23 @@ public sealed class ChatService : IChatService
         }
 
         return sessions;
+    }
+
+    private static string BuildContext(
+        IReadOnlyList<DocumentChunk> chunks,
+        string fallbackText,
+        int maxCharacters)
+    {
+        var context = chunks.Count > 0
+            ? string.Join("\n\n---\n\n", chunks.Select(x => x.Text))
+            : fallbackText;
+
+        if (context.Length <= maxCharacters)
+        {
+            return context;
+        }
+
+        return context[..maxCharacters];
     }
 
     private static string Truncate(string value, int maxLength)
