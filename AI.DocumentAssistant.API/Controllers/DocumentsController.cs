@@ -1,4 +1,6 @@
-﻿using AI.DocumentAssistant.Application.Abstractions.Documents;
+﻿using AI.DocumentAssistant.API.Contracts.Documents;
+using AI.DocumentAssistant.Application.Abstractions.Documents;
+using AI.DocumentAssistant.Application.Documents.Dtos;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -35,6 +37,13 @@ public sealed class DocumentsController : ControllerBase
         return Ok(await _documentService.GetByIdAsync(id, cancellationToken));
     }
 
+    [HttpGet("{documentId:guid}/status")]
+    public async Task<IActionResult> GetStatus(Guid documentId, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.GetStatusAsync(documentId, cancellationToken);
+        return Ok(result);
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
@@ -48,10 +57,21 @@ public sealed class DocumentsController : ControllerBase
         return Ok(await _documentService.SummarizeAsync(id, cancellationToken));
     }
 
-    [HttpGet("{documentId:guid}/status")]
-    public async Task<IActionResult> GetStatus(Guid documentId, CancellationToken cancellationToken)
+    [HttpPost("{id:guid}/extract")]
+    public async Task<IActionResult> Extract(
+        Guid id,
+        [FromBody] ExtractDocumentRequest request,
+        CancellationToken cancellationToken)
     {
-        var result = await _documentService.GetStatusAsync(documentId, cancellationToken);
+        var result = await _documentService.ExtractAsync(
+            id,
+            new ExtractDocumentRequestDto
+            {
+                ExtractionType = request.ExtractionType,
+                Fields = request.Fields
+            },
+            cancellationToken);
+
         return Ok(result);
     }
 }

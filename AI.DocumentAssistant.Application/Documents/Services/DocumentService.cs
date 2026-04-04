@@ -212,4 +212,50 @@ public sealed class DocumentService : IDocumentService
             Summary = summary
         };
     }
+
+    public async Task<ExtractDocumentResultDto> ExtractAsync(
+        Guid documentId,
+        ExtractDocumentRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        if (document.Status != DocumentStatus.Ready)
+        {
+            throw new BadRequestException("Document is not ready yet.");
+        }
+
+        if (string.IsNullOrWhiteSpace(document.ExtractedText))
+        {
+            throw new BadRequestException("Document text has not been processed yet.");
+        }
+
+        var extractionType = string.IsNullOrWhiteSpace(request.ExtractionType)
+            ? "generic"
+            : request.ExtractionType.Trim();
+
+        var promptSuffix = request.Fields.Count > 0
+            ? $"\nREQUESTED FIELDS:\n- {string.Join("\n- ", request.Fields)}"
+            : "\nREQUESTED FIELDS:\n- infer the most relevant fields dynamically";
+
+        var rawJson = await _openAiService.ExtractStructuredDataAsync(
+            document.ExtractedText + promptSuffix,
+            extractionType,
+            cancellationToken);
+
+        return new ExtractDocumentResultDto
+        {
+            DocumentId = document.Id,
+            ExtractionType = extractionType,
+            RawJson = rawJson
+        };
+    }
 }

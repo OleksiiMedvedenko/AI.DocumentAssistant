@@ -11,4 +11,8 @@ public interface IDocumentService
     Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken);
     Task DeleteAsync(Guid documentId, CancellationToken cancellationToken);
     Task<SummarizeResultDto> SummarizeAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<ExtractDocumentResultDto> ExtractAsync(
+        Guid documentId,
+        ExtractDocumentRequestDto request,
+        CancellationToken cancellationToken);
 }
