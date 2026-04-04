@@ -17,7 +17,7 @@ namespace AI.DocumentAssistant.Application.Services.Authentication
         public Guid GetUserId()
         {
             var value = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!Guid.TryParse(value, out var userId))
+             if (!Guid.TryParse(value, out var userId))
             {
                 throw new UnauthorizedException("User is not authenticated.");
             }

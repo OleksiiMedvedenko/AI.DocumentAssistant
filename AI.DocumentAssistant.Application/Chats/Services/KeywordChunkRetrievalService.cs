@@ -7,6 +7,9 @@ namespace AI.DocumentAssistant.Application.Chats.Services;
 
 public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
 {
+    private static readonly Regex TokenRegex = new(@"\p{L}[\p{L}\p{Nd}_-]*", RegexOptions.Compiled);
+    private static readonly Regex YearRegex = new(@"\b\d+\+?\s*(year|years|yr|yrs)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private readonly HashSet<string> _stopWords;
     private readonly ChatRetrievalOptions _options;
 
@@ -28,21 +31,23 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
         }
 
         var finalTake = take > 0 ? take : _options.DefaultTake;
-        var combinedQuery = BuildCombinedQuery(question, chatHistory);
-        var keywords = ExtractKeywords(combinedQuery);
+        var orderedChunks = chunks.OrderBy(x => x.ChunkIndex).ToList();
 
-        if (keywords.Count == 0)
+        var combinedQuery = BuildCombinedQuery(question, chatHistory);
+        var keywords = ExpandKeywords(ExtractKeywords(combinedQuery), question, chatHistory);
+        var phraseBoostTerms = ExtractPhraseBoostTerms(question);
+        var normalizedQuestion = Normalize(question);
+
+        if (keywords.Count == 0 && phraseBoostTerms.Count == 0)
         {
-            return chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
+            return orderedChunks.Take(finalTake).ToList();
         }
 
-        var phraseBoostTerms = ExtractPhraseBoostTerms(question);
-
-        var ranked = chunks
+        var ranked = orderedChunks
             .Select(chunk => new
             {
                 Chunk = chunk,
-                Score = CalculateScore(chunk.Text, keywords, phraseBoostTerms)
+                Score = CalculateScore(chunk.Text, keywords, phraseBoostTerms, normalizedQuestion)
             })
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.Chunk.ChunkIndex)
@@ -56,12 +61,12 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
 
         if (best.Count == 0)
         {
-            best = chunks.OrderBy(x => x.ChunkIndex).Take(finalTake).ToList();
+            best = orderedChunks.Take(finalTake).ToList();
         }
 
         if (_options.IncludeNeighborChunks)
         {
-            best = ExpandWithNeighbors(chunks, best, finalTake);
+            best = ExpandWithNeighbors(orderedChunks, best, finalTake);
         }
 
         return best
@@ -69,26 +74,85 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
             .ToList();
     }
 
-    private string BuildCombinedQuery(string question, IReadOnlyCollection<string>? chatHistory)
+    private static string BuildCombinedQuery(string question, IReadOnlyCollection<string>? chatHistory)
     {
         if (chatHistory is null || chatHistory.Count == 0)
         {
-            return question;
+            return question ?? string.Empty;
         }
 
-        var history = string.Join(" ", chatHistory);
-        return $"{history} {question}";
+        var history = string.Join(" ", chatHistory.Where(x => !string.IsNullOrWhiteSpace(x)));
+        return $"{history} {question}".Trim();
     }
 
     private HashSet<string> ExtractKeywords(string text)
     {
-        var matches = Regex.Matches(text.ToLowerInvariant(), @"\p{L}[\p{L}\p{Nd}_-]*");
+        var matches = TokenRegex.Matches((text ?? string.Empty).ToLowerInvariant());
 
         return matches
             .Select(x => x.Value.Trim())
-            .Where(x => x.Length >= 3)
+            .Where(x => x.Length >= 2)
             .Where(x => !_stopWords.Contains(x))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private HashSet<string> ExpandKeywords(
+        HashSet<string> baseKeywords,
+        string question,
+        IReadOnlyCollection<string>? chatHistory)
+    {
+        var expanded = new HashSet<string>(baseKeywords, StringComparer.OrdinalIgnoreCase);
+
+        var combined = $"{question} {string.Join(" ", chatHistory ?? [])}".ToLowerInvariant();
+
+        AddSynonymGroupIfMatch(expanded, combined,
+            ["experience", "experienced", "exp", "years", "year", "commercial", "worked", "employment", "career", "background", "seniority"]);
+
+        AddSynonymGroupIfMatch(expanded, combined,
+            ["skill", "skills", "technology", "technologies", "stack", "tools", "framework", "frameworks"]);
+
+        AddSynonymGroupIfMatch(expanded, combined,
+            ["education", "degree", "university", "study", "studies", "college", "school"]);
+
+        AddSynonymGroupIfMatch(expanded, combined,
+            ["project", "projects", "client", "clients", "responsibilities", "responsibility"]);
+
+        AddSynonymGroupIfMatch(expanded, combined,
+            ["developer", "engineer", "programmer", "backend", "frontend", "fullstack", "full-stack", ".net", "c#", "react"]);
+
+        if (combined.Contains("cv") || combined.Contains("resume"))
+        {
+            expanded.UnionWith(new[]
+            {
+                "experience", "skills", "education", "employment", "career", "developer", "engineer"
+            });
+        }
+
+        if (combined.Contains("how many") || combined.Contains("ile"))
+        {
+            expanded.UnionWith(new[]
+            {
+                "years", "year", "experience"
+            });
+        }
+
+        if (combined.Contains("senior") || combined.Contains("seniority"))
+        {
+            expanded.UnionWith(new[]
+            {
+                "experience", "years", "developer", "engineer"
+            });
+        }
+
+        return expanded;
+    }
+
+    private static void AddSynonymGroupIfMatch(HashSet<string> keywords, string combinedText, IReadOnlyCollection<string> group)
+    {
+        if (group.Any(term => combinedText.Contains(term, StringComparison.OrdinalIgnoreCase)))
+        {
+            keywords.UnionWith(group);
+        }
     }
 
     private static List<string> ExtractPhraseBoostTerms(string text)
@@ -108,57 +172,141 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
     private static int CalculateScore(
         string chunkText,
         HashSet<string> keywords,
-        IReadOnlyCollection<string> phraseBoostTerms)
+        IReadOnlyCollection<string> phraseBoostTerms,
+        string normalizedQuestion)
     {
         if (string.IsNullOrWhiteSpace(chunkText))
         {
             return 0;
         }
 
-        var normalized = chunkText.ToLowerInvariant();
+        var normalizedChunk = Normalize(chunkText);
         var score = 0;
         var matchedKeywordCount = 0;
 
         foreach (var keyword in keywords)
         {
-            var loweredKeyword = keyword.ToLowerInvariant();
-            var occurrences = CountOccurrences(normalized, loweredKeyword);
+            var normalizedKeyword = Normalize(keyword);
+            if (string.IsNullOrWhiteSpace(normalizedKeyword))
+            {
+                continue;
+            }
 
+            var occurrences = CountOccurrences(normalizedChunk, normalizedKeyword);
             if (occurrences <= 0)
             {
                 continue;
             }
 
             matchedKeywordCount++;
-            score += occurrences * 8;
+            score += occurrences * 10;
 
-            if (normalized.Contains($"{loweredKeyword}:"))
+            if (normalizedChunk.Contains($"{normalizedKeyword}:"))
             {
-                score += 6;
+                score += 8;
             }
 
-            if (normalized.Contains($"{loweredKeyword}\n") || normalized.StartsWith(loweredKeyword + " "))
+            if (normalizedChunk.StartsWith(normalizedKeyword + " "))
             {
-                score += 3;
+                score += 4;
             }
         }
 
-        score += matchedKeywordCount * 5;
+        score += matchedKeywordCount * 6;
 
         foreach (var phrase in phraseBoostTerms)
         {
-            if (normalized.Contains(phrase.ToLowerInvariant()))
+            var normalizedPhrase = Normalize(phrase);
+            if (!string.IsNullOrWhiteSpace(normalizedPhrase) &&
+                normalizedChunk.Contains(normalizedPhrase, StringComparison.Ordinal))
             {
-                score += 20;
+                score += 25;
             }
         }
 
-        if (normalized.Length <= 1000)
+        if (LooksLikeExperienceQuestion(normalizedQuestion))
+        {
+            if (ContainsAny(normalizedChunk, "experience", "employment", "career", "worked", "developer", "engineer"))
+            {
+                score += 25;
+            }
+
+            if (YearRegex.IsMatch(chunkText))
+            {
+                score += 30;
+            }
+        }
+
+        if (LooksLikeSkillsQuestion(normalizedQuestion) &&
+            ContainsAny(normalizedChunk, "skills", "stack", "technology", "technologies", "framework", "tools"))
+        {
+            score += 25;
+        }
+
+        if (LooksLikeEducationQuestion(normalizedQuestion) &&
+            ContainsAny(normalizedChunk, "education", "degree", "university", "college", "school"))
+        {
+            score += 25;
+        }
+
+        if (normalizedChunk.Length <= 1200)
         {
             score += 2;
         }
 
         return score;
+    }
+
+    private static bool LooksLikeExperienceQuestion(string question)
+    {
+        return ContainsAny(question,
+            "experience",
+            "years",
+            "year",
+            "worked",
+            "employment",
+            "career",
+            "seniority",
+            "commercial",
+            "doświadczenie",
+            "lat");
+    }
+
+    private static bool LooksLikeSkillsQuestion(string question)
+    {
+        return ContainsAny(question,
+            "skills",
+            "skill",
+            "stack",
+            "technology",
+            "technologies",
+            "framework",
+            "tools",
+            "umiejętności",
+            "technologie");
+    }
+
+    private static bool LooksLikeEducationQuestion(string question)
+    {
+        return ContainsAny(question,
+            "education",
+            "degree",
+            "university",
+            "college",
+            "school",
+            "edukacja",
+            "studia",
+            "uczelnia");
+    }
+
+    private static bool ContainsAny(string text, params string[] values)
+    {
+        return values.Any(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string Normalize(string value)
+    {
+        return (value ?? string.Empty).Trim().ToLowerInvariant();
     }
 
     private static int CountOccurrences(string source, string value)
@@ -180,7 +328,8 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
         IReadOnlyCollection<DocumentChunk> bestChunks,
         int targetCount)
     {
-        var byIndex = allChunks.ToDictionary(x => x.ChunkIndex);
+        var ordered = allChunks.OrderBy(x => x.ChunkIndex).ToList();
+        var byIndex = ordered.ToDictionary(x => x.ChunkIndex);
         var selected = new HashSet<int>(bestChunks.Select(x => x.ChunkIndex));
 
         foreach (var chunk in bestChunks.OrderBy(x => x.ChunkIndex))

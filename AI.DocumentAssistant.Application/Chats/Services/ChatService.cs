@@ -40,6 +40,7 @@ public sealed class ChatService : IChatService
             throw new BadRequestException("Message is required.");
         }
 
+        var normalizedMessage = dto.Message.Trim();
         var userId = _currentUserService.GetUserId();
 
         var document = await _dbContext.Documents
@@ -91,30 +92,38 @@ public sealed class ChatService : IChatService
             .Where(x => x.Role == ChatRole.User)
             .OrderByDescending(x => x.CreatedAtUtc)
             .Take(_retrievalOptions.HistoryMessagesToUse)
-            .Select(x => x.Content)
+            .Select(x => x.Content.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
             .Reverse()
             .ToList() ?? new List<string>();
 
+        var orderedChunks = document.Chunks
+            .OrderBy(x => x.ChunkIndex)
+            .ToList();
+
         var bestChunks = _chunkRetrievalService.GetBestMatchingChunks(
-            document.Chunks.ToList(),
-            dto.Message,
+            orderedChunks,
+            normalizedMessage,
             priorUserMessages,
             take: _retrievalOptions.DefaultTake);
 
-        var context = BuildContext(bestChunks, document.ExtractedText!, _retrievalOptions.MaxContextCharacters);
+        var context = BuildContext(
+            bestChunks,
+            document.ExtractedText!,
+            _retrievalOptions.MaxContextCharacters);
 
         var userMessage = new ChatMessage
         {
             Id = Guid.NewGuid(),
             ChatSessionId = session.Id,
             Role = ChatRole.User,
-            Content = dto.Message.Trim(),
+            Content = normalizedMessage,
             CreatedAtUtc = DateTime.UtcNow
         };
 
         _dbContext.ChatMessages.Add(userMessage);
 
-        var answer = await _openAiService.AnswerQuestionAsync(context, dto.Message, cancellationToken);
+        var answer = await _openAiService.AnswerQuestionAsync(context, normalizedMessage, cancellationToken);
 
         var assistantMessage = new ChatMessage
         {
@@ -220,16 +229,41 @@ public sealed class ChatService : IChatService
         string fallbackText,
         int maxCharacters)
     {
-        var context = chunks.Count > 0
-            ? string.Join("\n\n---\n\n", chunks.Select(x => x.Text))
-            : fallbackText;
+        if (maxCharacters <= 0)
+        {
+            maxCharacters = 12000;
+        }
+
+        string context;
+
+        if (chunks.Count == 0)
+        {
+            context = fallbackText;
+        }
+        else
+        {
+            var selectedChunkTexts = chunks
+                .Select(x => x.Text?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            context = string.Join("\n\n---\n\n", selectedChunkTexts);
+
+            if (string.IsNullOrWhiteSpace(context))
+            {
+                context = fallbackText;
+            }
+        }
+
+        context = context.Trim();
 
         if (context.Length <= maxCharacters)
         {
             return context;
         }
 
-        return context[..maxCharacters];
+        return context[..maxCharacters].TrimEnd();
     }
 
     private static string Truncate(string value, int maxLength)
