@@ -1,6 +1,7 @@
 ﻿using AI.DocumentAssistant.API.Contracts.Auth;
 using AI.DocumentAssistant.Application.Auth.Dtos;
 using AI.DocumentAssistant.Application.Auth.Services;
+using AI.DocumentAssistant.Application.Usage.Dtos;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -72,7 +73,30 @@ public sealed class AuthController : ControllerBase
         {
             Id = result.Id,
             Email = result.Email,
-            CreatedAtUtc = result.CreatedAtUtc
+            DisplayName = result.DisplayName,
+            Role = result.Role.ToString(),
+            IsActive = result.IsActive,
+            AuthProvider = result.AuthProvider.ToString(),
+            CreatedAtUtc = result.CreatedAtUtc,
+            Usage = new CurrentUserUsageResponse
+            {
+                HasUnlimitedAiUsage = result.UsageSummary.HasUnlimitedAiUsage,
+                ChatMessages = Map(result.UsageSummary.ChatMessages),
+                DocumentUploads = Map(result.UsageSummary.DocumentUploads),
+                Summarizations = Map(result.UsageSummary.Summarizations),
+                Extractions = Map(result.UsageSummary.Extractions),
+                Comparisons = Map(result.UsageSummary.Comparisons)
+            }
         });
+    }
+
+    private static UsageMetricResponse Map(UsageMetricDto dto)
+    {
+        return new UsageMetricResponse
+        {
+            Limit = dto.Limit,
+            Used = dto.Used,
+            Remaining = dto.Remaining
+        };
     }
 }

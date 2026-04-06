@@ -1,6 +1,7 @@
 ﻿using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Chats;
 using AI.DocumentAssistant.Application.Abstractions.Common;
+using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Application.Documents.Dtos;
 using AI.DocumentAssistant.Domain.Entities;
@@ -17,6 +18,8 @@ public sealed class ChatService : IChatService
     private readonly ICurrentUserService _currentUserService;
     private readonly IOpenAiService _openAiService;
     private readonly IChunkRetrievalService _chunkRetrievalService;
+    private readonly IUsageQuotaService _usageQuotaService;
+    private readonly IUsageTrackingService _usageTrackingService;
     private readonly ChatRetrievalOptions _retrievalOptions;
 
     public ChatService(
@@ -24,16 +27,23 @@ public sealed class ChatService : IChatService
         ICurrentUserService currentUserService,
         IOpenAiService openAiService,
         IChunkRetrievalService chunkRetrievalService,
+        IUsageQuotaService usageQuotaService,
+        IUsageTrackingService usageTrackingService,
         IOptions<ChatRetrievalOptions> retrievalOptions)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
         _openAiService = openAiService;
         _chunkRetrievalService = chunkRetrievalService;
+        _usageQuotaService = usageQuotaService;
+        _usageTrackingService = usageTrackingService;
         _retrievalOptions = retrievalOptions.Value;
     }
 
-    public async Task<AskDocumentResultDto> AskAsync(Guid documentId, AskDocumentDto dto, CancellationToken cancellationToken)
+    public async Task<AskDocumentResultDto> AskAsync(
+        Guid documentId,
+        AskDocumentDto dto,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(dto.Message))
         {
@@ -64,9 +74,7 @@ public sealed class ChatService : IChatService
             session = await _dbContext.ChatSessions
                 .Include(x => x.Messages)
                 .FirstOrDefaultAsync(
-                    x => x.Id == dto.ChatSessionId.Value
-                         && x.DocumentId == documentId
-                         && x.UserId == userId,
+                    x => x.Id == dto.ChatSessionId.Value && x.DocumentId == documentId && x.UserId == userId,
                     cancellationToken);
 
             if (session is null)
@@ -111,6 +119,12 @@ public sealed class ChatService : IChatService
             ? document.ExtractedText!
             : BuildContext(bestChunks, document.ExtractedText!, _retrievalOptions.MaxContextCharacters);
 
+        await _usageQuotaService.EnsureWithinQuotaAsync(
+            userId,
+            UsageType.ChatMessage,
+            1,
+            cancellationToken);
+
         var userMessage = new ChatMessage
         {
             Id = Guid.NewGuid(),
@@ -141,6 +155,14 @@ public sealed class ChatService : IChatService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        await _usageTrackingService.TrackAsync(
+            userId,
+            UsageType.ChatMessage,
+            1,
+            cancellationToken,
+            model: "gpt-4o-mini",
+            referenceId: session.Id.ToString());
+
         return new AskDocumentResultDto
         {
             ChatSessionId = session.Id,
@@ -148,7 +170,7 @@ public sealed class ChatService : IChatService
         };
     }
 
-    public async Task<IReadOnlyList<ChatMessageDto>> GetMessagesAsync(
+    public async Task<List<ChatMessageDto>> GetMessagesAsync(
         Guid documentId,
         Guid chatSessionId,
         CancellationToken cancellationToken)
@@ -157,9 +179,7 @@ public sealed class ChatService : IChatService
 
         var sessionExists = await _dbContext.ChatSessions
             .AnyAsync(
-                x => x.Id == chatSessionId
-                     && x.DocumentId == documentId
-                     && x.UserId == userId,
+                x => x.Id == chatSessionId && x.DocumentId == documentId && x.UserId == userId,
                 cancellationToken);
 
         if (!sessionExists)
@@ -180,7 +200,7 @@ public sealed class ChatService : IChatService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<ChatSessionDto>> GetSessionsAsync(Guid documentId, CancellationToken cancellationToken)
+    public async Task<List<ChatSessionDto>> GetSessionsAsync(Guid documentId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
 

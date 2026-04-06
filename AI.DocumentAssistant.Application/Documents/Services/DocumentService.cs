@@ -1,15 +1,14 @@
 ﻿using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Common;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
+using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Application.Documents.Dtos;
 using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
-using Azure.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace AI.DocumentAssistant.Application.Documents.Services;
 
@@ -17,15 +16,7 @@ public sealed class DocumentService : IDocumentService
 {
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".pdf",
-        ".docx",
-        ".txt",
-        ".md",
-        ".markdown",
-        ".csv",
-        ".json",
-        ".xml",
-        ".log"
+        ".pdf", ".docx", ".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".log"
     };
 
     private readonly AppDbContext _dbContext;
@@ -33,19 +24,25 @@ public sealed class DocumentService : IDocumentService
     private readonly IFileStorageService _fileStorageService;
     private readonly IDocumentProcessingQueue _documentProcessingQueue;
     private readonly IOpenAiService _openAiService;
+    private readonly IUsageQuotaService _usageQuotaService;
+    private readonly IUsageTrackingService _usageTrackingService;
 
     public DocumentService(
         AppDbContext dbContext,
         ICurrentUserService currentUserService,
         IFileStorageService fileStorageService,
         IDocumentProcessingQueue documentProcessingQueue,
-        IOpenAiService openAiService)
+        IOpenAiService openAiService,
+        IUsageQuotaService usageQuotaService,
+        IUsageTrackingService usageTrackingService)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
         _fileStorageService = fileStorageService;
         _documentProcessingQueue = documentProcessingQueue;
         _openAiService = openAiService;
+        _usageQuotaService = usageQuotaService;
+        _usageTrackingService = usageTrackingService;
     }
 
     public async Task<DocumentDto> UploadAsync(IFormFile file, CancellationToken cancellationToken)
@@ -61,13 +58,20 @@ public sealed class DocumentService : IDocumentService
         }
 
         var extension = Path.GetExtension(file.FileName);
+
         if (string.IsNullOrWhiteSpace(extension) || !AllowedExtensions.Contains(extension))
         {
-            throw new BadRequestException(
-                "Unsupported file type. Allowed: pdf, docx, txt, md, csv, json, xml, log.");
+            throw new BadRequestException("Unsupported file type. Allowed: pdf, docx, txt, md, csv, json, xml, log.");
         }
 
         var userId = _currentUserService.GetUserId();
+
+        await _usageQuotaService.EnsureWithinQuotaAsync(
+            userId,
+            UsageType.UploadDocument,
+            1,
+            cancellationToken);
+
         var fileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
 
         await using var stream = file.OpenReadStream();
@@ -91,6 +95,13 @@ public sealed class DocumentService : IDocumentService
 
         await _documentProcessingQueue.EnqueueAsync(document.Id, cancellationToken);
 
+        await _usageTrackingService.TrackAsync(
+            userId,
+            UsageType.UploadDocument,
+            1,
+            cancellationToken,
+            referenceId: document.Id.ToString());
+
         return new DocumentDto
         {
             Id = document.Id,
@@ -102,7 +113,7 @@ public sealed class DocumentService : IDocumentService
         };
     }
 
-    public async Task<IReadOnlyList<DocumentDto>> GetAllAsync(CancellationToken cancellationToken)
+    public async Task<List<DocumentDto>> GetAllAsync(CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
 
@@ -198,14 +209,27 @@ public sealed class DocumentService : IDocumentService
 
         EnsureReadyForAi(document);
 
+        await _usageQuotaService.EnsureWithinQuotaAsync(
+            userId,
+            UsageType.SummarizeDocument,
+            1,
+            cancellationToken);
+
         var summary = await _openAiService.GenerateSummaryAsync(
             document.ExtractedText!,
             request.Language,
             cancellationToken);
 
         document.Summary = summary;
-
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        await _usageTrackingService.TrackAsync(
+            userId,
+            UsageType.SummarizeDocument,
+            1,
+            cancellationToken,
+            model: "gpt-4o-mini",
+            referenceId: document.Id.ToString());
 
         return new SummarizeResultDto
         {
@@ -231,6 +255,12 @@ public sealed class DocumentService : IDocumentService
 
         EnsureReadyForAi(document);
 
+        await _usageQuotaService.EnsureWithinQuotaAsync(
+            userId,
+            UsageType.ExtractDocument,
+            1,
+            cancellationToken);
+
         var extractionType = string.IsNullOrWhiteSpace(request.ExtractionType)
             ? "generic"
             : request.ExtractionType.Trim();
@@ -246,10 +276,10 @@ public sealed class DocumentService : IDocumentService
             : document.ExtractedText!;
 
         var jsonResult = await _openAiService.ExtractStructuredDataAsync(
-           context,
-           extractionType,
-           request.Language,
-           cancellationToken);
+            context,
+            extractionType,
+            request.Language,
+            cancellationToken);
 
         var extraction = new ExtractedData
         {
@@ -263,6 +293,14 @@ public sealed class DocumentService : IDocumentService
         _dbContext.ExtractedData.Add(extraction);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        await _usageTrackingService.TrackAsync(
+            userId,
+            UsageType.ExtractDocument,
+            1,
+            cancellationToken,
+            model: "gpt-4o-mini",
+            referenceId: extraction.Id.ToString());
+
         return new ExtractedDataDto
         {
             Id = extraction.Id,
@@ -274,7 +312,7 @@ public sealed class DocumentService : IDocumentService
         };
     }
 
-    public async Task<IReadOnlyList<ExtractedDataDto>> GetExtractionsAsync(
+    public async Task<List<ExtractedDataDto>> GetExtractionsAsync(
         Guid documentId,
         CancellationToken cancellationToken)
     {
@@ -326,23 +364,10 @@ public sealed class DocumentService : IDocumentService
         return extraction ?? throw new NotFoundException("Extraction not found.");
     }
 
-    private static void EnsureReadyForAi(Document document)
-    {
-        if (document.Status != DocumentStatus.Ready)
-        {
-            throw new BadRequestException("Document is not ready yet.");
-        }
-
-        if (string.IsNullOrWhiteSpace(document.ExtractedText))
-        {
-            throw new BadRequestException("Document text has not been processed yet.");
-        }
-    }
-
     public async Task<CompareDocumentsResultDto> CompareAsync(
-    Guid firstDocumentId,
-    CompareDocumentsRequestDto request,
-    CancellationToken cancellationToken)
+        Guid firstDocumentId,
+        CompareDocumentsRequestDto request,
+        CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
 
@@ -352,9 +377,7 @@ public sealed class DocumentService : IDocumentService
         }
 
         var documents = await _dbContext.Documents
-            .Where(x =>
-                x.UserId == userId &&
-                (x.Id == firstDocumentId || x.Id == request.SecondDocumentId))
+            .Where(x => x.UserId == userId && (x.Id == firstDocumentId || x.Id == request.SecondDocumentId))
             .ToListAsync(cancellationToken);
 
         var firstDocument = documents.FirstOrDefault(x => x.Id == firstDocumentId);
@@ -368,12 +391,26 @@ public sealed class DocumentService : IDocumentService
         EnsureReadyForAi(firstDocument);
         EnsureReadyForAi(secondDocument);
 
+        await _usageQuotaService.EnsureWithinQuotaAsync(
+            userId,
+            UsageType.CompareDocument,
+            1,
+            cancellationToken);
+
         var result = await _openAiService.CompareDocumentsAsync(
             firstDocument.ExtractedText!,
             secondDocument.ExtractedText!,
             request.Prompt,
             request.Language,
             cancellationToken);
+
+        await _usageTrackingService.TrackAsync(
+            userId,
+            UsageType.CompareDocument,
+            1,
+            cancellationToken,
+            model: "gpt-4o-mini",
+            referenceId: $"{firstDocument.Id}:{secondDocument.Id}");
 
         return new CompareDocumentsResultDto
         {
@@ -383,5 +420,18 @@ public sealed class DocumentService : IDocumentService
             SecondDocumentName = secondDocument.OriginalFileName,
             Result = result
         };
+    }
+
+    private static void EnsureReadyForAi(Document document)
+    {
+        if (document.Status != DocumentStatus.Ready)
+        {
+            throw new BadRequestException("Document is not ready yet.");
+        }
+
+        if (string.IsNullOrWhiteSpace(document.ExtractedText))
+        {
+            throw new BadRequestException("Document text has not been processed yet.");
+        }
     }
 }

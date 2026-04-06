@@ -1,5 +1,8 @@
 using AI.DocumentAssistant.API.Extensions;
 using AI.DocumentAssistant.API.Middleware;
+using AI.DocumentAssistant.Application.Abstractions.Usage;
+using AI.DocumentAssistant.Application.Auth.Services;
+using AI.DocumentAssistant.Application.Usage.Services;
 using AI.DocumentAssistant.Infrastructure.DependencyInjection;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -53,6 +56,10 @@ public class Program
         builder.Services.AddApplicationServices();
         builder.Services.AddInfrastructure(builder.Configuration);
 
+        builder.Services.AddScoped<AuthService>();
+        builder.Services.AddScoped<IUsageTrackingService, UsageTrackingService>();
+        builder.Services.AddScoped<IUsageQuotaService, UsageQuotaService>();
+
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("Frontend", policy =>
@@ -85,11 +92,13 @@ public class Program
         }
 
         app.UseHttpsRedirection();
+
         app.UseAuthentication();
         app.UseAuthorization();
-        app.MapControllers();
 
         app.UseCors("Frontend");
+
+        app.MapControllers();
 
         app.Run();
     }

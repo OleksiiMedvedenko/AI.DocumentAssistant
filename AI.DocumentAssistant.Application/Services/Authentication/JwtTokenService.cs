@@ -21,12 +21,18 @@ namespace AI.DocumentAssistant.Application.Services.Authentication
         public string GenerateAccessToken(User user)
         {
             var claims = new List<Claim>
-        {
-            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(JwtRegisteredClaimNames.Email, user.Email),
-            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new(ClaimTypes.Email, user.Email)
-        };
+            {
+                new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new(JwtRegisteredClaimNames.Email, user.Email),
+                new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+                new(ClaimTypes.Email, user.Email),
+                new(ClaimTypes.Role, user.Role.ToString())
+            };
+
+            if (!string.IsNullOrWhiteSpace(user.DisplayName))
+            {
+                claims.Add(new Claim(ClaimTypes.Name, user.DisplayName));
+            }
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
