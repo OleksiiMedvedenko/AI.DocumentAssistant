@@ -40,4 +40,24 @@ public sealed class FakeOpenAiService : IOpenAiService
 
     private static string Escape(string value)
         => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+    public Task<string> GenerateSummaryAsync(string text, string? language, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<string> AnswerQuestionAsync(string documentContext, string question, string? language, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<string> ExtractStructuredDataAsync(string documentContext, string extractionType, string? language, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<string> CompareDocumentsAsync(string firstDocumentText, string secondDocumentText, string? comparisonPrompt, string? language, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
 }

@@ -1,5 +1,9 @@
-using AI.DocumentAssistant.API.Extensions;
 using AI.DocumentAssistant.API.Middleware;
+using AI.DocumentAssistant.Application.Abstractions.Authentication;
+using AI.DocumentAssistant.Application.Abstractions.Usage;
+using AI.DocumentAssistant.Application.Auth.Services;
+using AI.DocumentAssistant.Application.Services.Authentication;
+using AI.DocumentAssistant.Application.Usage.Services;
 using AI.DocumentAssistant.Infrastructure.DependencyInjection;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -18,11 +22,7 @@ public class Program
 
         builder.Services.AddSwaggerGen(options =>
         {
-            options.SwaggerDoc("v1", new OpenApiInfo
-            {
-                Title = "AI.DocumentAssistant.API",
-                Version = "v1"
-            });
+            options.SwaggerDoc("v1", new OpenApiInfo { Title = "AI.DocumentAssistant.API", Version = "v1" });
 
             options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
@@ -50,15 +50,18 @@ public class Program
             });
         });
 
-        builder.Services.AddApplicationServices();
         builder.Services.AddInfrastructure(builder.Configuration);
+
+        builder.Services.AddScoped<AuthService>();
+        builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+        builder.Services.AddScoped<IUsageTrackingService, UsageTrackingService>();
+        builder.Services.AddScoped<IUsageQuotaService, UsageQuotaService>();
 
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("Frontend", policy =>
             {
-                policy
-                    .WithOrigins("http://localhost:5173")
+                policy.WithOrigins("http://localhost:5173")
                     .AllowAnyHeader()
                     .AllowAnyMethod();
             });
@@ -85,11 +88,13 @@ public class Program
         }
 
         app.UseHttpsRedirection();
-        app.UseAuthentication();
-        app.UseAuthorization();
-        app.MapControllers();
 
         app.UseCors("Frontend");
+
+        app.UseAuthentication();
+        app.UseAuthorization();
+
+        app.MapControllers();
 
         app.Run();
     }

@@ -1,8 +1,10 @@
 ﻿using AI.DocumentAssistant.Application.Abstractions.Authentication;
 using AI.DocumentAssistant.Application.Abstractions.Common;
+using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Auth.Dtos;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,17 +16,20 @@ public sealed class AuthService
     private readonly IPasswordHasher _passwordHasher;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IUsageQuotaService _usageQuotaService;
 
     public AuthService(
         AppDbContext dbContext,
         IPasswordHasher passwordHasher,
         IJwtTokenService jwtTokenService,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IUsageQuotaService usageQuotaService)
     {
         _dbContext = dbContext;
         _passwordHasher = passwordHasher;
         _jwtTokenService = jwtTokenService;
         _currentUserService = currentUserService;
+        _usageQuotaService = usageQuotaService;
     }
 
     public async Task RegisterAsync(RegisterUserDto dto, CancellationToken cancellationToken)
@@ -37,12 +42,18 @@ public sealed class AuthService
             throw new BadRequestException("User with this email already exists.");
         }
 
+        var isFirstUser = !await _dbContext.Users.AnyAsync(cancellationToken);
+
         var user = new User
         {
             Id = Guid.NewGuid(),
             Email = email,
             PasswordHash = _passwordHasher.Hash(dto.Password),
-            CreatedAtUtc = DateTime.UtcNow
+            CreatedAtUtc = DateTime.UtcNow,
+            Role = isFirstUser ? UserRole.Admin : UserRole.User,
+            AuthProvider = AuthProvider.Local,
+            IsActive = true,
+            HasUnlimitedAiUsage = isFirstUser
         };
 
         _dbContext.Users.Add(user);
@@ -59,6 +70,11 @@ public sealed class AuthService
         if (user is null || !_passwordHasher.Verify(dto.Password, user.PasswordHash))
         {
             throw new UnauthorizedException("Invalid credentials.");
+        }
+
+        if (!user.IsActive)
+        {
+            throw new UnauthorizedException("User account is inactive.");
         }
 
         var accessToken = _jwtTokenService.GenerateAccessToken(user);
@@ -87,6 +103,11 @@ public sealed class AuthService
             throw new UnauthorizedException("Invalid refresh token.");
         }
 
+        if (!token.User.IsActive)
+        {
+            throw new UnauthorizedException("User account is inactive.");
+        }
+
         token.IsRevoked = true;
 
         var newRefreshToken = _jwtTokenService.GenerateRefreshToken();
@@ -108,15 +129,25 @@ public sealed class AuthService
         var userId = _currentUserService.GetUserId();
 
         var user = await _dbContext.Users
-            .Where(x => x.Id == userId)
-            .Select(x => new CurrentUserDto
-            {
-                Id = x.Id,
-                Email = x.Email,
-                CreatedAtUtc = x.CreatedAtUtc
-            })
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken);
 
-        return user ?? throw new UnauthorizedException("User is not authenticated.");
+        if (user is null)
+        {
+            throw new UnauthorizedException("User is not authenticated.");
+        }
+
+        var usageSummary = await _usageQuotaService.GetMyUsageSummaryAsync(userId, cancellationToken);
+
+        return new CurrentUserDto
+        {
+            Id = user.Id,
+            Email = user.Email,
+            DisplayName = user.DisplayName,
+            Role = user.Role,
+            IsActive = user.IsActive,
+            AuthProvider = user.AuthProvider,
+            CreatedAtUtc = user.CreatedAtUtc,
+            UsageSummary = usageSummary
+        };
     }
 }
