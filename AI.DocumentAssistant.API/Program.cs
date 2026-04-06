@@ -1,3 +1,4 @@
+using AI.DocumentAssistant.API.Extensions;
 using AI.DocumentAssistant.API.Middleware;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Auth.Services;
@@ -20,7 +21,11 @@ public class Program
 
         builder.Services.AddSwaggerGen(options =>
         {
-            options.SwaggerDoc("v1", new OpenApiInfo { Title = "AI.DocumentAssistant.API", Version = "v1" });
+            options.SwaggerDoc("v1", new OpenApiInfo
+            {
+                Title = "AI.DocumentAssistant.API",
+                Version = "v1"
+            });
 
             options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
@@ -48,6 +53,7 @@ public class Program
             });
         });
 
+        builder.Services.AddApplicationServices();
         builder.Services.AddInfrastructure(builder.Configuration);
 
         builder.Services.AddScoped<AuthService>();
@@ -58,7 +64,8 @@ public class Program
         {
             options.AddPolicy("Frontend", policy =>
             {
-                policy.WithOrigins("http://localhost:5173")
+                policy
+                    .WithOrigins("http://localhost:5173")
                     .AllowAnyHeader()
                     .AllowAnyMethod();
             });
@@ -86,10 +93,10 @@ public class Program
 
         app.UseHttpsRedirection();
 
-        app.UseCors("Frontend");
-
         app.UseAuthentication();
         app.UseAuthorization();
+
+        app.UseCors("Frontend");
 
         app.MapControllers();
 

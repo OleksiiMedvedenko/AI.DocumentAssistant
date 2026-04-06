@@ -37,6 +37,7 @@ namespace AI.DocumentAssistant.API.Middleware
                 UnauthorizedException => (int)HttpStatusCode.Unauthorized,
                 ForbiddenException => (int)HttpStatusCode.Forbidden,
                 NotFoundException => (int)HttpStatusCode.NotFound,
+                QuotaExceededException => StatusCodes.Status429TooManyRequests,
                 _ => (int)HttpStatusCode.InternalServerError
             };
 

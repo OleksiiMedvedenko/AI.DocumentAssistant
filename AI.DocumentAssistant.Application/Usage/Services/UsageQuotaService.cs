@@ -42,7 +42,7 @@ public sealed class UsageQuotaService : IUsageQuotaService
 
         if (metric.Used + quantity > metric.Limit)
         {
-            throw new BadRequestException("Monthly limit has been exceeded for this feature.");
+            throw new QuotaExceededException(GetQuotaExceededMessage(usageType, metric.Limit));
         }
     }
 
@@ -129,6 +129,19 @@ public sealed class UsageQuotaService : IUsageQuotaService
             Limit = limit,
             Used = used,
             Remaining = Math.Max(0, limit - used)
+        };
+    }
+
+    private static string GetQuotaExceededMessage(UsageType usageType, int limit)
+    {
+        return usageType switch
+        {
+            UsageType.ChatMessage => $"Monthly chat message limit reached ({limit}).",
+            UsageType.UploadDocument => $"Monthly document upload limit reached ({limit}).",
+            UsageType.SummarizeDocument => $"Monthly summarization limit reached ({limit}).",
+            UsageType.ExtractDocument => $"Monthly extraction limit reached ({limit}).",
+            UsageType.CompareDocument => $"Monthly comparison limit reached ({limit}).",
+            _ => "Monthly limit has been exceeded for this feature."
         };
     }
 }

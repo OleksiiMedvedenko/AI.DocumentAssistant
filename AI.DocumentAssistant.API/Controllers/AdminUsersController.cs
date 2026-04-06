@@ -24,27 +24,106 @@ public sealed class AdminUsersController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
     {
+        var now = DateTime.UtcNow;
+        var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var nextMonthStart = monthStart.AddMonths(1);
+
         var users = await _dbContext.Users
             .OrderBy(x => x.CreatedAtUtc)
-            .Select(x => new
-            {
-                x.Id,
-                x.Email,
-                x.DisplayName,
-                Role = x.Role.ToString(),
-                x.IsActive,
-                AuthProvider = x.AuthProvider.ToString(),
-                x.HasUnlimitedAiUsage,
-                x.MonthlyChatMessageLimit,
-                x.MonthlyDocumentUploadLimit,
-                x.MonthlySummarizationLimit,
-                x.MonthlyExtractionLimit,
-                x.MonthlyComparisonLimit,
-                x.CreatedAtUtc
-            })
             .ToListAsync(cancellationToken);
 
-        return Ok(users);
+        var userIds = users.Select(x => x.Id).ToList();
+
+        var activeOverrides = await _dbContext.UserQuotaOverrides
+            .Where(x =>
+                userIds.Contains(x.UserId) &&
+                x.ValidFromUtc <= now &&
+                (x.ValidToUtc == null || x.ValidToUtc >= now))
+            .GroupBy(x => x.UserId)
+            .Select(g => g.OrderByDescending(x => x.CreatedAtUtc).First())
+            .ToListAsync(cancellationToken);
+
+        var usageRecords = await _dbContext.UserUsageRecords
+            .Where(x =>
+                userIds.Contains(x.UserId) &&
+                x.OccurredAtUtc >= monthStart &&
+                x.OccurredAtUtc < nextMonthStart)
+            .ToListAsync(cancellationToken);
+
+        var overridesByUserId = activeOverrides.ToDictionary(x => x.UserId, x => x);
+        var usageByUserId = usageRecords
+            .GroupBy(x => x.UserId)
+            .ToDictionary(x => x.Key, x => x.ToList());
+
+        var result = users.Select(user =>
+        {
+            overridesByUserId.TryGetValue(user.Id, out var activeOverride);
+            usageByUserId.TryGetValue(user.Id, out var userUsage);
+            userUsage ??= new List<UserUsageRecord>();
+
+            var hasUnlimited = activeOverride?.HasUnlimitedAiUsageOverride ?? user.HasUnlimitedAiUsage;
+
+            int effectiveChatLimit = activeOverride?.MonthlyChatMessageLimitOverride ?? user.MonthlyChatMessageLimit;
+            int effectiveUploadLimit = activeOverride?.MonthlyDocumentUploadLimitOverride ?? user.MonthlyDocumentUploadLimit;
+            int effectiveSummaryLimit = activeOverride?.MonthlySummarizationLimitOverride ?? user.MonthlySummarizationLimit;
+            int effectiveExtractionLimit = activeOverride?.MonthlyExtractionLimitOverride ?? user.MonthlyExtractionLimit;
+            int effectiveComparisonLimit = activeOverride?.MonthlyComparisonLimitOverride ?? user.MonthlyComparisonLimit;
+
+            int chatUsed = userUsage.Where(x => x.UsageType == UsageType.ChatMessage).Sum(x => x.Quantity);
+            int uploadUsed = userUsage.Where(x => x.UsageType == UsageType.UploadDocument).Sum(x => x.Quantity);
+            int summaryUsed = userUsage.Where(x => x.UsageType == UsageType.SummarizeDocument).Sum(x => x.Quantity);
+            int extractionUsed = userUsage.Where(x => x.UsageType == UsageType.ExtractDocument).Sum(x => x.Quantity);
+            int comparisonUsed = userUsage.Where(x => x.UsageType == UsageType.CompareDocument).Sum(x => x.Quantity);
+
+            return new
+            {
+                user.Id,
+                user.Email,
+                user.DisplayName,
+                Role = user.Role.ToString(),
+                user.IsActive,
+                AuthProvider = user.AuthProvider.ToString(),
+                HasUnlimitedAiUsage = hasUnlimited,
+                MonthlyChatMessageLimit = effectiveChatLimit,
+                MonthlyDocumentUploadLimit = effectiveUploadLimit,
+                MonthlySummarizationLimit = effectiveSummaryLimit,
+                MonthlyExtractionLimit = effectiveExtractionLimit,
+                MonthlyComparisonLimit = effectiveComparisonLimit,
+                Usage = new
+                {
+                    ChatMessages = new
+                    {
+                        Used = chatUsed,
+                        Remaining = hasUnlimited ? (int?)null : Math.Max(0, effectiveChatLimit - chatUsed)
+                    },
+                    DocumentUploads = new
+                    {
+                        Used = uploadUsed,
+                        Remaining = hasUnlimited ? (int?)null : Math.Max(0, effectiveUploadLimit - uploadUsed)
+                    },
+                    Summarizations = new
+                    {
+                        Used = summaryUsed,
+                        Remaining = hasUnlimited ? (int?)null : Math.Max(0, effectiveSummaryLimit - summaryUsed)
+                    },
+                    Extractions = new
+                    {
+                        Used = extractionUsed,
+                        Remaining = hasUnlimited ? (int?)null : Math.Max(0, effectiveExtractionLimit - extractionUsed)
+                    },
+                    Comparisons = new
+                    {
+                        Used = comparisonUsed,
+                        Remaining = hasUnlimited ? (int?)null : Math.Max(0, effectiveComparisonLimit - comparisonUsed)
+                    }
+                },
+                HasActiveOverride = activeOverride != null,
+                OverrideReason = activeOverride?.Reason,
+                user.CreatedAtUtc
+            };
+        });
+
+        return Ok(result);
     }
 
     [HttpPatch("{userId:guid}/role")]
