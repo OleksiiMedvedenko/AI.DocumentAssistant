@@ -1,8 +1,6 @@
 using AI.DocumentAssistant.API.Middleware;
-using AI.DocumentAssistant.Application.Abstractions.Authentication;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Auth.Services;
-using AI.DocumentAssistant.Application.Services.Authentication;
 using AI.DocumentAssistant.Application.Usage.Services;
 using AI.DocumentAssistant.Infrastructure.DependencyInjection;
 using AI.DocumentAssistant.Infrastructure.Persistence;
@@ -53,7 +51,6 @@ public class Program
         builder.Services.AddInfrastructure(builder.Configuration);
 
         builder.Services.AddScoped<AuthService>();
-        builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
         builder.Services.AddScoped<IUsageTrackingService, UsageTrackingService>();
         builder.Services.AddScoped<IUsageQuotaService, UsageQuotaService>();
 

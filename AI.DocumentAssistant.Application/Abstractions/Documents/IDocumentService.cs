@@ -6,7 +6,7 @@ namespace AI.DocumentAssistant.Application.Abstractions.Documents;
 public interface IDocumentService
 {
     Task<DocumentDto> UploadAsync(IFormFile file, CancellationToken cancellationToken);
-    Task<IReadOnlyList<DocumentDto>> GetAllAsync(CancellationToken cancellationToken);
+    Task<List<DocumentDto>> GetAllAsync(CancellationToken cancellationToken);
     Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken);
     Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken);
     Task DeleteAsync(Guid documentId, CancellationToken cancellationToken);
@@ -20,9 +20,9 @@ public interface IDocumentService
         ExtractDocumentRequestDto request,
         CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<ExtractedDataDto>> GetExtractionsAsync(
-        Guid documentId,
-        CancellationToken cancellationToken);
+    Task<List<ExtractedDataDto>> GetExtractionsAsync(
+            Guid documentId,
+            CancellationToken cancellationToken);
 
     Task<ExtractedDataDto> GetExtractionByIdAsync(
         Guid documentId,
