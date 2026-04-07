@@ -2,7 +2,6 @@ using AI.DocumentAssistant.API.Extensions;
 using AI.DocumentAssistant.API.Middleware;
 using AI.DocumentAssistant.Infrastructure.DependencyInjection;
 using AI.DocumentAssistant.Infrastructure.Persistence;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 
@@ -57,13 +56,19 @@ public class Program
 
         var allowedOrigins = builder.Configuration
             .GetSection("Cors:AllowedOrigins")
-            .Get<string[]>() ?? ["http://localhost:5173"];
+            .Get<string[]>() ?? Array.Empty<string>();
 
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("Frontend", policy =>
             {
-                policy.WithOrigins(allowedOrigins)
+                if (allowedOrigins.Length == 0)
+                {
+                    return;
+                }
+
+                policy
+                    .WithOrigins(allowedOrigins)
                     .AllowAnyHeader()
                     .AllowAnyMethod();
             });
@@ -71,29 +76,7 @@ public class Program
 
         var app = builder.Build();
 
-        try
-        {
-            var applyMigrationsOnStartup =
-                builder.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup");
-
-            if (applyMigrationsOnStartup)
-            {
-                using var scope = app.Services.CreateScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-                Console.WriteLine("Applying migrations...");
-                dbContext.Database.Migrate();
-                Console.WriteLine("Migrations applied successfully.");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("=== STARTUP MIGRATION ERROR ===");
-            Console.WriteLine(ex);
-            throw;
-        }
-
-        app.UseMiddleware<ExceptionHandlingMiddleware>();
+        app.UseMiddleware<GlobalExceptionMiddleware>();
 
         if (app.Environment.IsDevelopment())
         {
@@ -101,15 +84,19 @@ public class Program
             app.UseSwaggerUI();
         }
 
+        if (builder.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+        {
+            using var scope = app.Services.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.Database.Migrate();
+        }
+
         app.UseHttpsRedirection();
-
         app.UseCors("Frontend");
-
         app.UseAuthentication();
         app.UseAuthorization();
 
         app.MapControllers();
-
         app.Run();
     }
 }

@@ -43,7 +43,10 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
                     try
                     {
                         using var scope = _scopeFactory.CreateScope();
+                        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         var processor = scope.ServiceProvider.GetRequiredService<IDocumentProcessingService>();
+
+                        await UpdateAttemptMetadataAsync(dbContext, documentId, attempt, stoppingToken);
 
                         _logger.LogInformation(
                             "Processing document {DocumentId}, attempt {Attempt}/{MaxAttempts}",
@@ -52,6 +55,8 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
                             MaxAttempts);
 
                         await processor.ProcessAsync(documentId, stoppingToken);
+
+                        await MarkDocumentAsSucceededAsync(dbContext, documentId, stoppingToken);
 
                         _logger.LogInformation("Finished processing document {DocumentId}", documentId);
                         break;
@@ -86,6 +91,7 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error while processing queued document loop.");
+
                 if (documentId != Guid.Empty)
                 {
                     await MarkDocumentAsFailedAsync(documentId, ex, stoppingToken);
@@ -94,6 +100,49 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
         }
 
         _logger.LogInformation("Document processing background worker stopped.");
+    }
+
+    private static async Task UpdateAttemptMetadataAsync(
+        AppDbContext dbContext,
+        Guid documentId,
+        int attempt,
+        CancellationToken cancellationToken)
+    {
+        var document = await dbContext.Documents.FirstOrDefaultAsync(
+            x => x.Id == documentId,
+            cancellationToken);
+
+        if (document is null)
+        {
+            return;
+        }
+
+        document.ProcessingAttemptCount = attempt;
+        document.LastProcessingAttemptAtUtc = DateTime.UtcNow;
+        document.Status = DocumentStatus.Processing;
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static async Task MarkDocumentAsSucceededAsync(
+        AppDbContext dbContext,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var document = await dbContext.Documents.FirstOrDefaultAsync(
+            x => x.Id == documentId,
+            cancellationToken);
+
+        if (document is null)
+        {
+            return;
+        }
+
+        document.Status = DocumentStatus.Ready;
+        document.ProcessedAtUtc = DateTime.UtcNow;
+        document.ErrorMessage = null;
+
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task MarkDocumentAsFailedAsync(
@@ -118,6 +167,7 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
             document.Status = DocumentStatus.Failed;
             document.ErrorMessage = exception.Message[..Math.Min(exception.Message.Length, 2000)];
             document.ProcessedAtUtc = DateTime.UtcNow;
+            document.LastProcessingAttemptAtUtc = DateTime.UtcNow;
 
             await dbContext.SaveChangesAsync(cancellationToken);
         }

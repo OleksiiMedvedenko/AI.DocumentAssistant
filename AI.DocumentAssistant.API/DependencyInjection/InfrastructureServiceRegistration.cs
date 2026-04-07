@@ -10,6 +10,7 @@ using AI.DocumentAssistant.Application.Services.Storage;
 using AI.DocumentAssistant.Application.Services.Time;
 using AI.DocumentAssistant.Infrastructure.BackgroundProcessing;
 using AI.DocumentAssistant.Infrastructure.Persistence;
+using AI.DocumentAssistant.Infrastructure.Persistence.Abstractions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -28,14 +29,14 @@ public static class InfrastructureServiceRegistration
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
+        services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
+
         services.AddHttpContextAccessor();
 
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
-
         services.AddSingleton<ISystemClock, SystemClock>();
-
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         services.AddHttpClient<IOpenAiService, OpenAiService>();

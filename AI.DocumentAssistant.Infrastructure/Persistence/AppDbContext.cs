@@ -1,9 +1,10 @@
 ﻿using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Infrastructure.Persistence.Abstractions;
 using Microsoft.EntityFrameworkCore;
 
 namespace AI.DocumentAssistant.Infrastructure.Persistence;
 
-public sealed class AppDbContext : DbContext
+public sealed class AppDbContext : DbContext, IApplicationDbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
@@ -31,10 +32,8 @@ public sealed class AppDbContext : DbContext
         modelBuilder.Entity<UserUsageRecord>(builder =>
         {
             builder.HasKey(x => x.Id);
-
             builder.HasIndex(x => new { x.UserId, x.OccurredAtUtc });
             builder.HasIndex(x => new { x.UserId, x.UsageType, x.OccurredAtUtc });
-
             builder.Property(x => x.EstimatedCost).HasColumnType("decimal(18,6)");
 
             builder.HasOne(x => x.User)
@@ -46,7 +45,6 @@ public sealed class AppDbContext : DbContext
         modelBuilder.Entity<UserQuotaOverride>(builder =>
         {
             builder.HasKey(x => x.Id);
-
             builder.HasIndex(x => new { x.UserId, x.ValidFromUtc, x.ValidToUtc });
 
             builder.HasOne(x => x.User)

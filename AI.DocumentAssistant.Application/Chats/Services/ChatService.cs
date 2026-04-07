@@ -6,7 +6,7 @@ using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Application.Documents.Dtos;
 using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
-using AI.DocumentAssistant.Infrastructure.Persistence;
+using AI.DocumentAssistant.Infrastructure.Persistence.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -14,7 +14,7 @@ namespace AI.DocumentAssistant.Application.Chats.Services;
 
 public sealed class ChatService : IChatService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IApplicationDbContext _dbContext;
     private readonly ICurrentUserService _currentUserService;
     private readonly IOpenAiService _openAiService;
     private readonly IChunkRetrievalService _chunkRetrievalService;
@@ -23,7 +23,7 @@ public sealed class ChatService : IChatService
     private readonly ChatRetrievalOptions _retrievalOptions;
 
     public ChatService(
-        AppDbContext dbContext,
+        IApplicationDbContext dbContext,
         ICurrentUserService currentUserService,
         IOpenAiService openAiService,
         IChunkRetrievalService chunkRetrievalService,
@@ -74,7 +74,9 @@ public sealed class ChatService : IChatService
             session = await _dbContext.ChatSessions
                 .Include(x => x.Messages)
                 .FirstOrDefaultAsync(
-                    x => x.Id == dto.ChatSessionId.Value && x.DocumentId == documentId && x.UserId == userId,
+                    x => x.Id == dto.ChatSessionId.Value
+                      && x.DocumentId == documentId
+                      && x.UserId == userId,
                     cancellationToken);
 
             if (session is null)
@@ -93,7 +95,7 @@ public sealed class ChatService : IChatService
                 CreatedAtUtc = DateTime.UtcNow
             };
 
-            _dbContext.ChatSessions.Add(session);
+            await _dbContext.ChatSessions.AddAsync(session, cancellationToken);
         }
 
         var priorUserMessages = session.Messages?
@@ -103,7 +105,8 @@ public sealed class ChatService : IChatService
             .Select(x => x.Content.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Reverse()
-            .ToList() ?? new List<string>();
+            .ToList()
+            ?? new List<string>();
 
         var orderedChunks = document.Chunks
             .OrderBy(x => x.ChunkIndex)
@@ -115,9 +118,10 @@ public sealed class ChatService : IChatService
             priorUserMessages,
             take: _retrievalOptions.DefaultTake);
 
-        var context = bestChunks.Count < 3
-            ? document.ExtractedText!
-            : BuildContext(bestChunks, document.ExtractedText!, _retrievalOptions.MaxContextCharacters);
+        var context = BuildContext(
+            bestChunks,
+            document.ExtractedText!,
+            _retrievalOptions.MaxContextCharacters);
 
         await _usageQuotaService.EnsureWithinQuotaAsync(
             userId,
@@ -134,7 +138,7 @@ public sealed class ChatService : IChatService
             CreatedAtUtc = DateTime.UtcNow
         };
 
-        _dbContext.ChatMessages.Add(userMessage);
+        await _dbContext.ChatMessages.AddAsync(userMessage, cancellationToken);
 
         var answer = await _openAiService.AnswerQuestionAsync(
             context,
@@ -151,8 +155,7 @@ public sealed class ChatService : IChatService
             CreatedAtUtc = DateTime.UtcNow
         };
 
-        _dbContext.ChatMessages.Add(assistantMessage);
-
+        await _dbContext.ChatMessages.AddAsync(assistantMessage, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await _usageTrackingService.TrackAsync(
@@ -179,7 +182,9 @@ public sealed class ChatService : IChatService
 
         var sessionExists = await _dbContext.ChatSessions
             .AnyAsync(
-                x => x.Id == chatSessionId && x.DocumentId == documentId && x.UserId == userId,
+                x => x.Id == chatSessionId
+                  && x.DocumentId == documentId
+                  && x.UserId == userId,
                 cancellationToken);
 
         if (!sessionExists)
@@ -200,7 +205,9 @@ public sealed class ChatService : IChatService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<List<ChatSessionDto>> GetSessionsAsync(Guid documentId, CancellationToken cancellationToken)
+    public async Task<List<ChatSessionDto>> GetSessionsAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
 
@@ -248,18 +255,13 @@ public sealed class ChatService : IChatService
     }
 
     private static string BuildContext(
-     IReadOnlyList<DocumentChunk> chunks,
-     string fallbackText,
-     int maxCharacters)
+        IReadOnlyList<DocumentChunk> chunks,
+        string fallbackText,
+        int maxCharacters)
     {
         if (maxCharacters <= 0)
         {
             maxCharacters = 12000;
-        }
-
-        if (chunks.Count == 0)
-        {
-            return TrimToBoundary(fallbackText, maxCharacters);
         }
 
         var selectedChunkTexts = chunks
@@ -268,36 +270,34 @@ public sealed class ChatService : IChatService
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (selectedChunkTexts.Count == 0)
+        if (selectedChunkTexts.Count > 0)
         {
-            return TrimToBoundary(fallbackText, maxCharacters);
-        }
+            var separator = "\n\n---\n\n";
+            var parts = new List<string>();
+            var currentLength = 0;
 
-        var separator = "\n\n---\n\n";
-        var parts = new List<string>();
-        var currentLength = 0;
-
-        foreach (var chunkText in selectedChunkTexts)
-        {
-            var additionalLength = parts.Count == 0
-                ? chunkText!.Length
-                : separator.Length + chunkText!.Length;
-
-            if (currentLength + additionalLength > maxCharacters)
+            foreach (var chunkText in selectedChunkTexts)
             {
-                break;
+                var additionalLength = parts.Count == 0
+                    ? chunkText!.Length
+                    : separator.Length + chunkText!.Length;
+
+                if (currentLength + additionalLength > maxCharacters)
+                {
+                    break;
+                }
+
+                parts.Add(chunkText!);
+                currentLength += additionalLength;
             }
 
-            parts.Add(chunkText);
-            currentLength += additionalLength;
+            if (parts.Count > 0)
+            {
+                return string.Join(separator, parts);
+            }
         }
 
-        if (parts.Count == 0)
-        {
-            return TrimToBoundary(fallbackText, maxCharacters);
-        }
-
-        return string.Join(separator, parts);
+        return TrimToBoundary(fallbackText, maxCharacters);
     }
 
     private static string TrimToBoundary(string value, int maxCharacters)
@@ -308,6 +308,7 @@ public sealed class ChatService : IChatService
         }
 
         var trimmed = value.Trim();
+
         if (trimmed.Length <= maxCharacters)
         {
             return trimmed;
@@ -316,9 +317,7 @@ public sealed class ChatService : IChatService
         var candidate = trimmed[..maxCharacters];
         var lastBoundary = Math.Max(
             candidate.LastIndexOf('\n'),
-            Math.Max(
-                candidate.LastIndexOf('.'),
-                candidate.LastIndexOf(' ')));
+            Math.Max(candidate.LastIndexOf('.'), candidate.LastIndexOf(' ')));
 
         if (lastBoundary > maxCharacters / 2)
         {
