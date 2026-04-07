@@ -1,10 +1,8 @@
 using AI.DocumentAssistant.API.Extensions;
 using AI.DocumentAssistant.API.Middleware;
-using AI.DocumentAssistant.Application.Abstractions.Usage;
-using AI.DocumentAssistant.Application.Auth.Services;
-using AI.DocumentAssistant.Application.Usage.Services;
 using AI.DocumentAssistant.Infrastructure.DependencyInjection;
 using AI.DocumentAssistant.Infrastructure.Persistence;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 
@@ -16,6 +14,7 @@ public class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
+        builder.Services.AddValidatedConfiguration(builder.Configuration);
         builder.Services.AddControllers();
         builder.Services.AddEndpointsApiExplorer();
 
@@ -56,16 +55,15 @@ public class Program
         builder.Services.AddApplicationServices();
         builder.Services.AddInfrastructure(builder.Configuration);
 
-        builder.Services.AddScoped<AuthService>();
-        builder.Services.AddScoped<IUsageTrackingService, UsageTrackingService>();
-        builder.Services.AddScoped<IUsageQuotaService, UsageQuotaService>();
+        var allowedOrigins = builder.Configuration
+            .GetSection("Cors:AllowedOrigins")
+            .Get<string[]>() ?? ["http://localhost:5173"];
 
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("Frontend", policy =>
             {
-                policy
-                    .WithOrigins("http://localhost:5173")
+                policy.WithOrigins(allowedOrigins)
                     .AllowAnyHeader()
                     .AllowAnyMethod();
             });
@@ -73,14 +71,34 @@ public class Program
 
         var app = builder.Build();
 
-        using (var scope = app.Services.CreateScope())
-        {
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Console.WriteLine("Environment: " + builder.Environment.EnvironmentName);
+        Console.WriteLine("DefaultConnection: " + builder.Configuration.GetConnectionString("DefaultConnection"));
+        Console.WriteLine("ApplyMigrationsOnStartup: " + builder.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"));
+        Console.WriteLine("JWT secret present: " +
+            !string.IsNullOrWhiteSpace(builder.Configuration["Jwt:SecretKey"]));
+        Console.WriteLine("OpenAI key present: " +
+            !string.IsNullOrWhiteSpace(builder.Configuration["OpenAI:ApiKey"]));
 
-            if (app.Environment.IsDevelopment())
+        try
+        {
+            var applyMigrationsOnStartup =
+                builder.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup");
+
+            if (applyMigrationsOnStartup)
             {
+                using var scope = app.Services.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                Console.WriteLine("Applying migrations...");
                 dbContext.Database.Migrate();
+                Console.WriteLine("Migrations applied successfully.");
             }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("=== STARTUP MIGRATION ERROR ===");
+            Console.WriteLine(ex);
+            throw;
         }
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -93,10 +111,10 @@ public class Program
 
         app.UseHttpsRedirection();
 
+        app.UseCors("Frontend");
+
         app.UseAuthentication();
         app.UseAuthorization();
-
-        app.UseCors("Frontend");
 
         app.MapControllers();
 

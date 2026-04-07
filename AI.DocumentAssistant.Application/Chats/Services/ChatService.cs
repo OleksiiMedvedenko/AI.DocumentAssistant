@@ -248,45 +248,84 @@ public sealed class ChatService : IChatService
     }
 
     private static string BuildContext(
-        IReadOnlyList<DocumentChunk> chunks,
-        string fallbackText,
-        int maxCharacters)
+     IReadOnlyList<DocumentChunk> chunks,
+     string fallbackText,
+     int maxCharacters)
     {
         if (maxCharacters <= 0)
         {
             maxCharacters = 12000;
         }
 
-        string context;
-
         if (chunks.Count == 0)
         {
-            context = fallbackText;
+            return TrimToBoundary(fallbackText, maxCharacters);
         }
-        else
+
+        var selectedChunkTexts = chunks
+            .Select(x => x.Text?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (selectedChunkTexts.Count == 0)
         {
-            var selectedChunkTexts = chunks
-                .Select(x => x.Text?.Trim())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
+            return TrimToBoundary(fallbackText, maxCharacters);
+        }
 
-            context = string.Join("\n\n---\n\n", selectedChunkTexts);
+        var separator = "\n\n---\n\n";
+        var parts = new List<string>();
+        var currentLength = 0;
 
-            if (string.IsNullOrWhiteSpace(context))
+        foreach (var chunkText in selectedChunkTexts)
+        {
+            var additionalLength = parts.Count == 0
+                ? chunkText!.Length
+                : separator.Length + chunkText!.Length;
+
+            if (currentLength + additionalLength > maxCharacters)
             {
-                context = fallbackText;
+                break;
             }
+
+            parts.Add(chunkText);
+            currentLength += additionalLength;
         }
 
-        context = context.Trim();
-
-        if (context.Length <= maxCharacters)
+        if (parts.Count == 0)
         {
-            return context;
+            return TrimToBoundary(fallbackText, maxCharacters);
         }
 
-        return context[..maxCharacters].TrimEnd();
+        return string.Join(separator, parts);
+    }
+
+    private static string TrimToBoundary(string value, int maxCharacters)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length <= maxCharacters)
+        {
+            return trimmed;
+        }
+
+        var candidate = trimmed[..maxCharacters];
+        var lastBoundary = Math.Max(
+            candidate.LastIndexOf('\n'),
+            Math.Max(
+                candidate.LastIndexOf('.'),
+                candidate.LastIndexOf(' ')));
+
+        if (lastBoundary > maxCharacters / 2)
+        {
+            candidate = candidate[..lastBoundary];
+        }
+
+        return candidate.TrimEnd();
     }
 
     private static string Truncate(string value, int maxLength)
