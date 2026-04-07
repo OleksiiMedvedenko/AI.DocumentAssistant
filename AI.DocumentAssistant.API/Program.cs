@@ -71,14 +71,6 @@ public class Program
 
         var app = builder.Build();
 
-        Console.WriteLine("Environment: " + builder.Environment.EnvironmentName);
-        Console.WriteLine("DefaultConnection: " + builder.Configuration.GetConnectionString("DefaultConnection"));
-        Console.WriteLine("ApplyMigrationsOnStartup: " + builder.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"));
-        Console.WriteLine("JWT secret present: " +
-            !string.IsNullOrWhiteSpace(builder.Configuration["Jwt:SecretKey"]));
-        Console.WriteLine("OpenAI key present: " +
-            !string.IsNullOrWhiteSpace(builder.Configuration["OpenAI:ApiKey"]));
-
         try
         {
             var applyMigrationsOnStartup =
