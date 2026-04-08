@@ -9,6 +9,7 @@ using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Text;
 
 namespace AI.DocumentAssistant.Application.Chats.Services;
 
@@ -74,9 +75,9 @@ public sealed class ChatService : IChatService
             session = await _dbContext.ChatSessions
                 .Include(x => x.Messages)
                 .FirstOrDefaultAsync(
-                    x => x.Id == dto.ChatSessionId.Value
-                      && x.DocumentId == documentId
-                      && x.UserId == userId,
+                    x => x.Id == dto.ChatSessionId.Value &&
+                         x.DocumentId == documentId &&
+                         x.UserId == userId,
                     cancellationToken);
 
             if (session is null)
@@ -112,15 +113,17 @@ public sealed class ChatService : IChatService
             .OrderBy(x => x.ChunkIndex)
             .ToList();
 
-        var bestChunks = _chunkRetrievalService.GetBestMatchingChunks(
+        var bestChunks = await _chunkRetrievalService.GetBestMatchingChunksAsync(
             orderedChunks,
             normalizedMessage,
             priorUserMessages,
-            take: _retrievalOptions.DefaultTake);
+            _retrievalOptions.DefaultTake,
+            cancellationToken);
 
         var context = BuildContext(
             bestChunks,
             document.ExtractedText!,
+            normalizedMessage,
             _retrievalOptions.MaxContextCharacters);
 
         await _usageQuotaService.EnsureWithinQuotaAsync(
@@ -138,10 +141,23 @@ public sealed class ChatService : IChatService
             CreatedAtUtc = DateTime.UtcNow
         };
 
+        var recentConversation = session.Messages?
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(6)
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => $"{x.Role}: {x.Content}")
+            .ToList()
+            ?? new List<string>();
+
         await _dbContext.ChatMessages.AddAsync(userMessage, cancellationToken);
 
-        var answer = await _openAiService.AnswerQuestionAsync(
+        var enrichedContext = BuildPromptContext(
             context,
+            recentConversation,
+            normalizedMessage);
+
+        var answer = await _openAiService.AnswerQuestionAsync(
+            enrichedContext,
             normalizedMessage,
             dto.Language,
             cancellationToken);
@@ -173,7 +189,7 @@ public sealed class ChatService : IChatService
         };
     }
 
-    public async Task<List<ChatMessageDto>> GetMessagesAsync(
+    public async Task<IReadOnlyList<ChatMessageDto>> GetMessagesAsync(
         Guid documentId,
         Guid chatSessionId,
         CancellationToken cancellationToken)
@@ -182,9 +198,9 @@ public sealed class ChatService : IChatService
 
         var sessionExists = await _dbContext.ChatSessions
             .AnyAsync(
-                x => x.Id == chatSessionId
-                  && x.DocumentId == documentId
-                  && x.UserId == userId,
+                x => x.Id == chatSessionId &&
+                     x.DocumentId == documentId &&
+                     x.UserId == userId,
                 cancellationToken);
 
         if (!sessionExists)
@@ -205,7 +221,7 @@ public sealed class ChatService : IChatService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<List<ChatSessionDto>> GetSessionsAsync(
+    public async Task<IReadOnlyList<ChatSessionDto>> GetSessionsAsync(
         Guid documentId,
         CancellationToken cancellationToken)
     {
@@ -255,49 +271,93 @@ public sealed class ChatService : IChatService
     }
 
     private static string BuildContext(
-        IReadOnlyList<DocumentChunk> chunks,
-        string fallbackText,
-        int maxCharacters)
+    IReadOnlyList<DocumentChunk> chunks,
+    string fallbackText,
+    string question,
+    int maxCharacters)
     {
         if (maxCharacters <= 0)
         {
-            maxCharacters = 12000;
+            maxCharacters = 12_000;
+        }
+
+        if (IsBroadQuestion(question))
+        {
+            return TrimToBoundary(fallbackText, maxCharacters);
         }
 
         var selectedChunkTexts = chunks
+            .OrderBy(x => x.ChunkIndex)
             .Select(x => x.Text?.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (selectedChunkTexts.Count > 0)
+        if (selectedChunkTexts.Count == 0)
         {
-            var separator = "\n\n---\n\n";
-            var parts = new List<string>();
-            var currentLength = 0;
-
-            foreach (var chunkText in selectedChunkTexts)
-            {
-                var additionalLength = parts.Count == 0
-                    ? chunkText!.Length
-                    : separator.Length + chunkText!.Length;
-
-                if (currentLength + additionalLength > maxCharacters)
-                {
-                    break;
-                }
-
-                parts.Add(chunkText!);
-                currentLength += additionalLength;
-            }
-
-            if (parts.Count > 0)
-            {
-                return string.Join(separator, parts);
-            }
+            return TrimToBoundary(fallbackText, maxCharacters);
         }
 
-        return TrimToBoundary(fallbackText, maxCharacters);
+        const string separator = "\n\n---\n\n";
+        var parts = new List<string>();
+        var currentLength = 0;
+
+        foreach (var chunkText in selectedChunkTexts)
+        {
+            var text = chunkText!;
+            var additionalLength = parts.Count == 0 ? text.Length : separator.Length + text.Length;
+
+            if (currentLength + additionalLength > maxCharacters)
+            {
+                break;
+            }
+
+            parts.Add(text);
+            currentLength += additionalLength;
+        }
+
+        var context = string.Join(separator, parts);
+
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            return TrimToBoundary(fallbackText, maxCharacters);
+        }
+
+        return context;
+    }
+
+    private static bool IsBroadQuestion(string question)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+        {
+            return false;
+        }
+
+        var q = question.Trim().ToLowerInvariant();
+
+        string[] broadPatterns =
+        [
+            "summarize",
+            "summary",
+            "what is this document about",
+            "what is this about",
+            "main points",
+            "key points",
+            "overall",
+            "in general",
+            "general overview",
+            "o czym jest",
+            "podsumuj",
+            "podsumowanie",
+            "najważniejsze",
+            "ogólnie",
+            "w skrócie",
+            "про що цей документ",
+            "підсумуй",
+            "загалом"
+        ];
+
+        return broadPatterns.Any(q.Contains);
     }
 
     private static string TrimToBoundary(string value, int maxCharacters)
@@ -337,5 +397,32 @@ public sealed class ChatService : IChatService
         return value.Length <= maxLength
             ? value
             : value[..maxLength].TrimEnd() + "...";
+    }
+
+    private static string BuildPromptContext(
+    string documentContext,
+    IReadOnlyList<string> recentConversation,
+    string currentQuestion)
+    {
+        var sb = new StringBuilder();
+
+        if (recentConversation.Count > 0)
+        {
+            sb.AppendLine("RECENT CONVERSATION:");
+            foreach (var message in recentConversation)
+            {
+                sb.AppendLine(message);
+            }
+
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("CURRENT QUESTION:");
+        sb.AppendLine(currentQuestion);
+        sb.AppendLine();
+        sb.AppendLine("DOCUMENT EVIDENCE:");
+        sb.AppendLine(documentContext);
+
+        return sb.ToString().Trim();
     }
 }

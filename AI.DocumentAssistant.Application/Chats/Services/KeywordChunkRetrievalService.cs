@@ -7,7 +7,8 @@ namespace AI.DocumentAssistant.Application.Chats.Services;
 
 public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
 {
-    private static readonly Regex TokenRegex = new(@"\p{L}[\p{L}\p{Nd}_-]*", RegexOptions.Compiled);
+    private static readonly Regex TokenRegex =
+        new(@"\p{L}[\p{L}\p{Nd}_-]*", RegexOptions.Compiled);
 
     private readonly HashSet<string> _stopWords;
     private readonly ChatRetrievalOptions _options;
@@ -18,27 +19,28 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
         _stopWords = _options.StopWords.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    public IReadOnlyList<DocumentChunk> GetBestMatchingChunks(
+    public Task<IReadOnlyList<DocumentChunk>> GetBestMatchingChunksAsync(
         IReadOnlyCollection<DocumentChunk> chunks,
         string question,
         IReadOnlyCollection<string>? chatHistory = null,
-        int take = 6)
+        int take = 6,
+        CancellationToken cancellationToken = default)
     {
         if (chunks.Count == 0)
         {
-            return [];
+            return Task.FromResult<IReadOnlyList<DocumentChunk>>([]);
         }
 
         var finalTake = take > 0 ? take : _options.DefaultTake;
         var orderedChunks = chunks.OrderBy(x => x.ChunkIndex).ToList();
 
-        var combinedQuery = BuildCombinedQuery(question, chatHistory);
+        var combinedQuery = BuildRetrievalQuery(question, chatHistory);
         var keywords = ExtractKeywords(combinedQuery);
         var phraseBoostTerms = ExtractPhraseBoostTerms(question);
 
         if (keywords.Count == 0 && phraseBoostTerms.Count == 0)
         {
-            return orderedChunks.Take(finalTake).ToList();
+            return Task.FromResult<IReadOnlyList<DocumentChunk>>(orderedChunks.Take(finalTake).ToList());
         }
 
         var ranked = orderedChunks
@@ -67,20 +69,73 @@ public sealed class KeywordChunkRetrievalService : IChunkRetrievalService
             best = ExpandWithNeighbors(orderedChunks, best, finalTake);
         }
 
-        return best
-            .OrderBy(x => x.ChunkIndex)
-            .ToList();
+        return Task.FromResult<IReadOnlyList<DocumentChunk>>(
+            best.OrderBy(x => x.ChunkIndex).ToList());
     }
 
-    private static string BuildCombinedQuery(string question, IReadOnlyCollection<string>? chatHistory)
+    private static string BuildRetrievalQuery(string question, IReadOnlyCollection<string>? chatHistory)
     {
-        if (chatHistory is null || chatHistory.Count == 0)
+        var current = question?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(current))
         {
-            return question ?? string.Empty;
+            return string.Empty;
         }
 
-        var history = string.Join(" ", chatHistory.Where(x => !string.IsNullOrWhiteSpace(x)));
-        return $"{history} {question}".Trim();
+        if (!LooksLikeFollowUpQuestion(current))
+        {
+            return current;
+        }
+
+        if (chatHistory is null || chatHistory.Count == 0)
+        {
+            return current;
+        }
+
+        var lastUserMessage = chatHistory
+            .LastOrDefault(x => !string.IsNullOrWhiteSpace(x))?
+            .Trim();
+
+        if (string.IsNullOrWhiteSpace(lastUserMessage))
+        {
+            return current;
+        }
+
+        return $"{lastUserMessage} {current}".Trim();
+    }
+
+    private static bool LooksLikeFollowUpQuestion(string question)
+    {
+        var q = question.Trim().ToLowerInvariant();
+
+        string[] followUpMarkers =
+        [
+            "a ",
+        "i ",
+        "oraz ",
+        "też",
+        "także",
+        "co z ",
+        "a co z",
+        "czy też",
+        "what about",
+        "and ",
+        "also ",
+        "does it",
+        "is it",
+        "that",
+        "those",
+        "them",
+        "it ",
+        "he ",
+        "she ",
+        "а ",
+        "і ",
+        "це"
+        ];
+
+        return q.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 6
+               || followUpMarkers.Any(marker => q.StartsWith(marker, StringComparison.Ordinal));
     }
 
     private HashSet<string> ExtractKeywords(string text)

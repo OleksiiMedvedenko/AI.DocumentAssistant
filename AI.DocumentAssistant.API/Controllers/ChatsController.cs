@@ -29,7 +29,8 @@ public sealed class ChatsController : ControllerBase
             new AskDocumentDto
             {
                 ChatSessionId = request.ChatSessionId,
-                Message = request.Message
+                Message = request.Message,
+                Language = request.Language
             },
             cancellationToken);
 

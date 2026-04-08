@@ -4,9 +4,10 @@ namespace AI.DocumentAssistant.Application.Abstractions.Chats;
 
 public interface IChunkRetrievalService
 {
-    IReadOnlyList<DocumentChunk> GetBestMatchingChunks(
+    Task<IReadOnlyList<DocumentChunk>> GetBestMatchingChunksAsync(
         IReadOnlyCollection<DocumentChunk> chunks,
         string question,
         IReadOnlyCollection<string>? chatHistory = null,
-        int take = 6);
+        int take = 6,
+        CancellationToken cancellationToken = default);
 }

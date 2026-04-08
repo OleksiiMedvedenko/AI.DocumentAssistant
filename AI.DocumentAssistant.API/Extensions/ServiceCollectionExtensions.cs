@@ -23,6 +23,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IUsageTrackingService, UsageTrackingService>();
         services.AddScoped<IUsageQuotaService, UsageQuotaService>();
 
+        services.AddScoped<KeywordChunkRetrievalService>();
+        services.AddScoped<VectorChunkRetrievalService>();
+
         return services;
     }
 }

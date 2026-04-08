@@ -56,9 +56,54 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
 
                         await processor.ProcessAsync(documentId, stoppingToken);
 
-                        await MarkDocumentAsSucceededAsync(dbContext, documentId, stoppingToken);
+                        var finalStatus = await GetDocumentStatusAsync(dbContext, documentId, stoppingToken);
 
-                        _logger.LogInformation("Finished processing document {DocumentId}", documentId);
+                        if (finalStatus == DocumentStatus.Ready)
+                        {
+                            _logger.LogInformation("Finished processing document {DocumentId}", documentId);
+                            break;
+                        }
+
+                        if (finalStatus == DocumentStatus.Failed)
+                        {
+                            if (attempt < MaxAttempts)
+                            {
+                                _logger.LogWarning(
+                                    "Document {DocumentId} finished with Failed status on attempt {Attempt}/{MaxAttempts}. Retrying.",
+                                    documentId,
+                                    attempt,
+                                    MaxAttempts);
+
+                                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), stoppingToken);
+                                continue;
+                            }
+
+                            _logger.LogError(
+                                "Document {DocumentId} finished with Failed status after {MaxAttempts} attempts.",
+                                documentId,
+                                MaxAttempts);
+
+                            break;
+                        }
+
+                        if (attempt < MaxAttempts)
+                        {
+                            _logger.LogWarning(
+                                "Document {DocumentId} ended in unexpected status {Status} on attempt {Attempt}/{MaxAttempts}. Retrying.",
+                                documentId,
+                                finalStatus,
+                                attempt,
+                                MaxAttempts);
+
+                            await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), stoppingToken);
+                            continue;
+                        }
+
+                        await MarkDocumentAsFailedAsync(
+                            documentId,
+                            $"Document processing ended in unexpected status '{finalStatus}'.",
+                            stoppingToken);
+
                         break;
                     }
                     catch (Exception ex) when (attempt < MaxAttempts)
@@ -80,7 +125,7 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
                             documentId,
                             MaxAttempts);
 
-                        await MarkDocumentAsFailedAsync(documentId, ex, stoppingToken);
+                        await MarkDocumentAsFailedAsync(documentId, ex.Message, stoppingToken);
                     }
                 }
             }
@@ -94,7 +139,7 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
 
                 if (documentId != Guid.Empty)
                 {
-                    await MarkDocumentAsFailedAsync(documentId, ex, stoppingToken);
+                    await MarkDocumentAsFailedAsync(documentId, ex.Message, stoppingToken);
                 }
             }
         }
@@ -120,34 +165,25 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
         document.ProcessingAttemptCount = attempt;
         document.LastProcessingAttemptAtUtc = DateTime.UtcNow;
         document.Status = DocumentStatus.Processing;
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-    }
-
-    private static async Task MarkDocumentAsSucceededAsync(
-        AppDbContext dbContext,
-        Guid documentId,
-        CancellationToken cancellationToken)
-    {
-        var document = await dbContext.Documents.FirstOrDefaultAsync(
-            x => x.Id == documentId,
-            cancellationToken);
-
-        if (document is null)
-        {
-            return;
-        }
-
-        document.Status = DocumentStatus.Ready;
-        document.ProcessedAtUtc = DateTime.UtcNow;
         document.ErrorMessage = null;
 
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private static async Task<DocumentStatus?> GetDocumentStatusAsync(
+        AppDbContext dbContext,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.Documents
+            .Where(x => x.Id == documentId)
+            .Select(x => (DocumentStatus?)x.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
     private async Task MarkDocumentAsFailedAsync(
         Guid documentId,
-        Exception exception,
+        string errorMessage,
         CancellationToken cancellationToken)
     {
         try
@@ -165,7 +201,7 @@ public sealed class QueuedDocumentProcessingBackgroundService : BackgroundServic
             }
 
             document.Status = DocumentStatus.Failed;
-            document.ErrorMessage = exception.Message[..Math.Min(exception.Message.Length, 2000)];
+            document.ErrorMessage = errorMessage[..Math.Min(errorMessage.Length, 2000)];
             document.ProcessedAtUtc = DateTime.UtcNow;
             document.LastProcessingAttemptAtUtc = DateTime.UtcNow;
 

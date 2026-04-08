@@ -1,10 +1,10 @@
-﻿namespace AI.DocumentAssistant.Domain.Enums
+﻿namespace AI.DocumentAssistant.Domain.Enums;
+
+public enum DocumentStatus
 {
-    public enum DocumentStatus
-    {
-        Uploaded = 1,
-        Processing = 2,
-        Ready = 3,
-        Failed = 4
-    }
+    Uploaded = 0,
+    Queued = 1,
+    Processing = 2,
+    Ready = 3,
+    Failed = 4
 }

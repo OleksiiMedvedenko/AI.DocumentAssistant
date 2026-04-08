@@ -22,12 +22,12 @@ public sealed class OpenAiService : IOpenAiService
             new AuthenticationHeaderValue("Bearer", _options.ApiKey);
     }
 
-    public async Task<string> GenerateSummaryAsync(
+    public Task<string> GenerateSummaryAsync(
         string text,
         string? language,
         CancellationToken cancellationToken)
     {
-        var safeText = TrimInput(text, 18000);
+        var safeText = TrimInput(text, 18_000);
         var languageInstruction = BuildLanguageInstruction(language);
 
         var request = new
@@ -49,49 +49,68 @@ public sealed class OpenAiService : IOpenAiService
             }
         };
 
-        return await SendChatCompletionAsync(request, cancellationToken);
+        return SendChatCompletionAsync(request, cancellationToken);
     }
 
-    public async Task<string> AnswerQuestionAsync(
-        string documentContext,
-        string question,
-        string? language,
-        CancellationToken cancellationToken)
+    public Task<string> AnswerQuestionAsync(
+    string documentContext,
+    string question,
+    string? language,
+    CancellationToken cancellationToken)
     {
-        var safeContext = TrimInput(documentContext, 20000);
+        var safeContext = TrimInput(documentContext, 28000);
         var safeQuestion = question?.Trim() ?? string.Empty;
         var languageInstruction = BuildLanguageInstruction(language, safeQuestion);
+        var currentUtc = DateTime.UtcNow.ToString("yyyy-MM-dd");
 
         var request = new
         {
             model = _options.Model,
-            temperature = 0.1,
+            temperature = 0.15,
             messages = new object[]
             {
-                new
-                {
-                    role = "developer",
-                    content = BuildQuestionAnsweringDeveloperPrompt(languageInstruction)
-                },
-                new
-                {
-                    role = "user",
-                    content =
-                        $"QUESTION:\n{safeQuestion}\n\nDOCUMENT CONTEXT:\n{safeContext}"
-                }
+            new
+            {
+                role = "developer",
+                content =
+                    "You are an intelligent document assistant. " +
+                    "Use the provided document context as the main source of truth. " +
+                    "Your task is not only to extract explicit facts, but also to make careful professional inferences when the document strongly suggests them. " +
+                    "A strong inference may be based on job title, responsibilities, tools, systems, domain terminology, timeline, or surrounding details. " +
+                    "Examples: if a candidate works in payroll/HR administration and uses Płatnik, kadry i płace, payroll systems, or listy płac, it is reasonable to infer involvement in salary calculation or payroll-related work unless the document suggests otherwise. " +
+                    "Never present an inference as a confirmed fact. Label it clearly as likely, probable, suggested, or inferred. " +
+                    "Decision policy:\n" +
+                    "1. If the answer is explicitly stated, answer directly.\n" +
+                    "2. If the answer is not explicit but strongly suggested by role, tools, systems, or responsibilities, answer with a careful inference.\n" +
+                    "3. If the support is weak, say the document only suggests it weakly.\n" +
+                    "4. If the context does not support it, say the document does not provide enough information.\n" +
+                    "5. Mention the strongest supporting evidence briefly.\n" +
+                    "6. Prefer concise, useful answers over generic refusals.\n" +
+                    "7. If the question is about dates, timelines, current status, or whether something is current, assume today's UTC date is " + currentUtc + ".\n" +
+                    languageInstruction
+            },
+            new
+            {
+                role = "user",
+                content =
+                    $"TODAY (UTC): {currentUtc}\n\n" +
+                    $"QUESTION:\n{safeQuestion}\n\n" +
+                    $"DOCUMENT CONTEXT:\n{safeContext}\n\n" +
+                    "Return the final answer only."
+            }
             }
         };
 
-        return await SendChatCompletionAsync(request, cancellationToken);
+        return SendChatCompletionAsync(request, cancellationToken);
     }
 
-    public async Task<string> ExtractStructuredDataAsync(
+    public Task<string> ExtractStructuredDataAsync(
         string documentContext,
         string extractionType,
         string? language,
         CancellationToken cancellationToken)
     {
-        var safeContext = TrimInput(documentContext, 18000);
+        var safeContext = TrimInput(documentContext, 18_000);
         var safeType = string.IsNullOrWhiteSpace(extractionType) ? "generic" : extractionType.Trim();
         var languageInstruction = BuildLanguageInstruction(language, safeType);
 
@@ -112,11 +131,7 @@ public sealed class OpenAiService : IOpenAiService
                         {
                             extractionType = new { type = "string" },
                             summary = new { type = "string" },
-                            fields = new
-                            {
-                                type = "object",
-                                additionalProperties = true
-                            }
+                            fields = new { type = "object", additionalProperties = true }
                         },
                         required = new[] { "extractionType", "summary", "fields" },
                         additionalProperties = false
@@ -129,7 +144,8 @@ public sealed class OpenAiService : IOpenAiService
                 {
                     role = "developer",
                     content =
-                        "Extract structured information from the document. Return valid JSON matching the schema. " +
+                        "Extract structured information from the document. " +
+                        "Return valid JSON matching the schema. " +
                         "Use only information supported by the document. " +
                         "Do not invent missing values. " +
                         $"The 'summary' field should follow this rule: {languageInstruction}"
@@ -137,24 +153,24 @@ public sealed class OpenAiService : IOpenAiService
                 new
                 {
                     role = "user",
-                    content =
-                        $"EXTRACTION TYPE: {safeType}\n\nDOCUMENT:\n{safeContext}"
+                    content = $"EXTRACTION TYPE: {safeType}\n\nDOCUMENT:\n{safeContext}"
                 }
             }
         };
 
-        return await SendChatCompletionAsync(request, cancellationToken);
+        return SendChatCompletionAsync(request, cancellationToken);
     }
 
-    public async Task<string> CompareDocumentsAsync(
+    public Task<string> CompareDocumentsAsync(
         string firstDocumentText,
         string secondDocumentText,
         string? comparisonPrompt,
         string? language,
         CancellationToken cancellationToken)
     {
-        var safeFirst = TrimInput(firstDocumentText, 14000);
-        var safeSecond = TrimInput(secondDocumentText, 14000);
+        var safeFirst = TrimInput(firstDocumentText, 14_000);
+        var safeSecond = TrimInput(secondDocumentText, 14_000);
+
         var safePrompt = string.IsNullOrWhiteSpace(comparisonPrompt)
             ? "Compare the two documents. Focus on similarities, differences, missing information, and the most important conclusions."
             : comparisonPrompt.Trim();
@@ -181,7 +197,7 @@ public sealed class OpenAiService : IOpenAiService
             }
         };
 
-        return await SendChatCompletionAsync(request, cancellationToken);
+        return SendChatCompletionAsync(request, cancellationToken);
     }
 
     private async Task<string> SendChatCompletionAsync(object requestBody, CancellationToken cancellationToken)
@@ -215,9 +231,12 @@ public sealed class OpenAiService : IOpenAiService
             if (contentElement.ValueKind == JsonValueKind.String)
             {
                 var text = contentElement.GetString();
-                return string.IsNullOrWhiteSpace(text)
-                    ? throw new InvalidOperationException("OpenAI returned empty content.")
-                    : text.Trim();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    throw new InvalidOperationException("OpenAI returned empty content.");
+                }
+
+                return text.Trim();
             }
 
             if (contentElement.ValueKind == JsonValueKind.Array)
@@ -233,9 +252,12 @@ public sealed class OpenAiService : IOpenAiService
                 }
 
                 var result = sb.ToString().Trim();
-                return string.IsNullOrWhiteSpace(result)
-                    ? throw new InvalidOperationException("OpenAI returned empty content.")
-                    : result;
+                if (string.IsNullOrWhiteSpace(result))
+                {
+                    throw new InvalidOperationException("OpenAI returned empty content.");
+                }
+
+                return result;
             }
         }
 
@@ -245,14 +267,11 @@ public sealed class OpenAiService : IOpenAiService
     private static string BuildSummaryDeveloperPrompt(string languageInstruction)
     {
         return
-            "You summarize documents clearly and accurately. Return plain text only. " +
+            "You summarize documents clearly and accurately. " +
+            "Return plain text only. " +
             "Do not invent facts. " +
             "Prefer concrete facts over generic statements. " +
-            "Focus on the most important information that is explicitly present in the document. " +
-            "When the document looks like a CV or resume, prioritize the following when present: current or most recent role, most recent employer, employment dates, education, skills, certifications, and languages. " +
-            "If dates are present, include them when they help explain the timeline. " +
-            "If the document contains current employment indicators such as 'present', 'current', 'nadal', 'до тепер', include that fact clearly. " +
-            "Do not add information that is not supported by the document. " +
+            "Focus on the most important information explicitly present in the document. " +
             languageInstruction;
     }
 
@@ -260,31 +279,17 @@ public sealed class OpenAiService : IOpenAiService
     {
         return
             "Summarize the following document in a concise but useful way.\n" +
-            "Focus on concrete facts that are explicitly present in the document.\n" +
-            "Avoid generic wording.\n" +
-            "If this is a CV or resume, make sure to include when present:\n" +
-            "- current or most recent role\n" +
-            "- most recent employer\n" +
-            "- employment dates and whether the role is current\n" +
-            "- earlier relevant experience\n" +
-            "- education\n" +
-            "- key skills\n" +
-            "- languages or certifications\n\n" +
+            "Focus on concrete facts explicitly present in the document.\n\n" +
             $"DOCUMENT:\n{safeText}";
     }
 
     private static string BuildQuestionAnsweringDeveloperPrompt(string languageInstruction)
     {
         return
-            "You are an AI assistant that answers questions about a document. " +
+            "You answer questions about a document. " +
             "Use the provided document context as the primary source. " +
-            "Do not invent facts that are not supported by the document. " +
-            "If the answer is explicitly stated in the document, answer directly. " +
-            "If the answer is not stated directly but can be reasonably inferred from the document, you may provide an inference, but you must clearly label it as an inference. " +
-            "When giving an inference, briefly mention which part of the document supports it. " +
-            "If the document does not contain enough information even for a reasonable inference, say that it is not found in the document. " +
-            "Prefer exact facts over broad interpretation. " +
-            "Keep answers concise, relevant, and honest about uncertainty. " +
+            "Do not invent facts. " +
+            "If something is inferred rather than explicitly stated, clearly say so. " +
             languageInstruction;
     }
 
@@ -293,9 +298,7 @@ public sealed class OpenAiService : IOpenAiService
         return
             "You compare two documents accurately. Return plain text only. " +
             "Structure the answer with: Summary, Similarities, Differences, Missing or conflicting information, Conclusion. " +
-            "Prefer concrete facts over generic statements. " +
-            "Do not invent facts that are not supported by the documents. " +
-            "When useful, mention dates, names, roles, quantities, and explicit factual differences. " +
+            "Do not invent facts. " +
             languageInstruction;
     }
 
@@ -313,12 +316,9 @@ public sealed class OpenAiService : IOpenAiService
             };
         }
 
-        if (!string.IsNullOrWhiteSpace(fallbackUserText))
-        {
-            return "Respond in the same language as the user's request.";
-        }
-
-        return "Respond in English.";
+        return !string.IsNullOrWhiteSpace(fallbackUserText)
+            ? "Respond in the same language as the user's request."
+            : "Respond in English.";
     }
 
     private static string TrimInput(string input, int maxLength)

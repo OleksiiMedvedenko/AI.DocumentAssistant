@@ -86,8 +86,9 @@ public sealed class DocumentService : IDocumentService
             ContentType = file.ContentType ?? "application/octet-stream",
             SizeInBytes = file.Length,
             StoragePath = storagePath,
-            Status = DocumentStatus.Uploaded,
-            UploadedAtUtc = DateTime.UtcNow
+            Status = DocumentStatus.Queued,
+            UploadedAtUtc = DateTime.UtcNow,
+            ErrorMessage = null
         };
 
         _dbContext.Documents.Add(document);
@@ -200,6 +201,7 @@ public sealed class DocumentService : IDocumentService
         var userId = _currentUserService.GetUserId();
 
         var document = await _dbContext.Documents
+            .Include(x => x.Chunks)
             .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
 
         if (document is null)
@@ -246,6 +248,7 @@ public sealed class DocumentService : IDocumentService
         var userId = _currentUserService.GetUserId();
 
         var document = await _dbContext.Documents
+            .Include(x => x.Chunks)
             .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
 
         if (document is null)
@@ -378,6 +381,7 @@ public sealed class DocumentService : IDocumentService
 
         var documents = await _dbContext.Documents
             .Where(x => x.UserId == userId && (x.Id == firstDocumentId || x.Id == request.SecondDocumentId))
+            .Include(x => x.Chunks)
             .ToListAsync(cancellationToken);
 
         var firstDocument = documents.FirstOrDefault(x => x.Id == firstDocumentId);
@@ -424,14 +428,33 @@ public sealed class DocumentService : IDocumentService
 
     private static void EnsureReadyForAi(Document document)
     {
-        if (document.Status != DocumentStatus.Ready)
+        if (document.Status is DocumentStatus.Queued or DocumentStatus.Processing or DocumentStatus.Uploaded)
         {
-            throw new BadRequestException("Document is not ready yet.");
+            throw new BadRequestException("Document is still being processed. Please try again in a moment.");
+        }
+
+        if (document.Status == DocumentStatus.Failed)
+        {
+            var message = string.IsNullOrWhiteSpace(document.ErrorMessage)
+                ? "Document processing failed."
+                : $"Document processing failed: {document.ErrorMessage}";
+
+            throw new BadRequestException(message);
         }
 
         if (string.IsNullOrWhiteSpace(document.ExtractedText))
         {
-            throw new BadRequestException("Document text has not been processed yet.");
+            throw new BadRequestException("Document is not ready yet. Extracted text is missing.");
+        }
+
+        if (document.Chunks is null || document.Chunks.Count == 0)
+        {
+            throw new BadRequestException("Document is not ready yet. Search chunks are missing.");
+        }
+
+        if (document.Status != DocumentStatus.Ready)
+        {
+            throw new BadRequestException("Document is not ready yet.");
         }
     }
 }

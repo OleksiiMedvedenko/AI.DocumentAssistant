@@ -1,7 +1,5 @@
 ﻿using AI.DocumentAssistant.API;
 using AI.DocumentAssistant.Application.Abstractions.AI;
-using AI.DocumentAssistant.Application.Abstractions.Documents;
-using AI.DocumentAssistant.Application.Services.Storage;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using AI.DocumentAssistant.UnitTests.TestDoubles;
 using Microsoft.AspNetCore.Hosting;
@@ -17,24 +15,41 @@ namespace AI.DocumentAssistant.UnitTests.Infrastructure;
 
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private DbConnection _connection = default!;
-    private string _storageRoot = default!;
+    private DbConnection? _connection;
+    private string? _storageRoot;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
 
+        Environment.SetEnvironmentVariable("Jwt__Issuer", "AI.DocumentAssistant.Tests");
+        Environment.SetEnvironmentVariable("Jwt__Audience", "AI.DocumentAssistant.Tests.Users");
+        Environment.SetEnvironmentVariable("Jwt__SecretKey", "test-secret-key-123456789012345678901234567890");
+        Environment.SetEnvironmentVariable("Jwt__AccessTokenExpirationMinutes", "60");
+        Environment.SetEnvironmentVariable("Jwt__RefreshTokenExpirationDays", "7");
+
+        Environment.SetEnvironmentVariable("OpenAI__ApiKey", "test-key");
+        Environment.SetEnvironmentVariable("OpenAI__Model", "gpt-4o-mini");
+        Environment.SetEnvironmentVariable("OpenAI__BaseUrl", "https://api.openai.com/v1/");
+
+        _storageRoot = Path.Combine(
+            Path.GetTempPath(),
+            "ai-document-assistant-tests",
+            Guid.NewGuid().ToString("N"));
+
+        Directory.CreateDirectory(_storageRoot);
+
+        Environment.SetEnvironmentVariable("LocalStorage__RootPath", _storageRoot);
+
         builder.ConfigureServices(services =>
         {
-            _storageRoot = Path.Combine(Path.GetTempPath(), "ai-document-assistant-tests", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(_storageRoot);
-
             _connection = new SqliteConnection("DataSource=:memory:");
             _connection.Open();
 
             services.RemoveAll(typeof(DbContextOptions<AppDbContext>));
             services.RemoveAll(typeof(AppDbContext));
             services.RemoveAll(typeof(IOpenAiService));
+            services.RemoveAll(typeof(IEmbeddingService));
 
             services.AddDbContext<AppDbContext>(options =>
             {
@@ -42,14 +57,11 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             });
 
             services.AddScoped<IOpenAiService, FakeOpenAiService>();
+            services.AddScoped<IEmbeddingService, FakeEmbeddingService>();
 
-            services.PostConfigure<LocalStorageOptions>(options =>
-            {
-                options.RootPath = _storageRoot;
-            });
+            var serviceProvider = services.BuildServiceProvider();
 
-            var sp = services.BuildServiceProvider();
-            using var scope = sp.CreateScope();
+            using var scope = serviceProvider.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             db.Database.EnsureCreated();
         });
@@ -59,11 +71,26 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
     public new async Task DisposeAsync()
     {
-        await _connection.DisposeAsync();
+        if (_connection is not null)
+        {
+            await _connection.DisposeAsync();
+        }
 
-        if (Directory.Exists(_storageRoot))
+        if (!string.IsNullOrWhiteSpace(_storageRoot) && Directory.Exists(_storageRoot))
         {
             Directory.Delete(_storageRoot, recursive: true);
         }
+
+        Environment.SetEnvironmentVariable("Jwt__Issuer", null);
+        Environment.SetEnvironmentVariable("Jwt__Audience", null);
+        Environment.SetEnvironmentVariable("Jwt__SecretKey", null);
+        Environment.SetEnvironmentVariable("Jwt__AccessTokenExpirationMinutes", null);
+        Environment.SetEnvironmentVariable("Jwt__RefreshTokenExpirationDays", null);
+
+        Environment.SetEnvironmentVariable("OpenAI__ApiKey", null);
+        Environment.SetEnvironmentVariable("OpenAI__Model", null);
+        Environment.SetEnvironmentVariable("OpenAI__BaseUrl", null);
+
+        Environment.SetEnvironmentVariable("LocalStorage__RootPath", null);
     }
 }
