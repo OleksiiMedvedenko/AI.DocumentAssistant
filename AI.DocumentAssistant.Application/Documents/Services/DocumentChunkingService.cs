@@ -6,10 +6,9 @@ namespace AI.DocumentAssistant.Application.Services.DocumentProcessing;
 
 public sealed class DocumentChunkingService : IDocumentChunkingService
 {
-    private static readonly Regex ParagraphSplitRegex =
-        new(@"(\r\n|\r|\n){2,}", RegexOptions.Compiled);
+    private static readonly Regex ParagraphSplitRegex = new(@"(\r\n|\r|\n){2,}", RegexOptions.Compiled);
 
-    public IReadOnlyList<string> Chunk(string text, int chunkSize = 1400, int overlap = 220)
+    public IReadOnlyList<string> Chunk(string text, int chunkSize = 1600, int overlap = 240)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -34,7 +33,6 @@ public sealed class DocumentChunkingService : IDocumentChunkingService
 
         var paragraphs = SplitIntoParagraphs(normalized);
         var chunks = new List<string>();
-
         var current = new StringBuilder();
 
         foreach (var paragraph in paragraphs)
@@ -63,30 +61,42 @@ public sealed class DocumentChunkingService : IDocumentChunkingService
             if (current.Length + 2 + paragraph.Length <= chunkSize)
             {
                 current.AppendLine().AppendLine().Append(paragraph);
+                continue;
             }
-            else
+
+            chunks.Add(current.ToString().Trim());
+
+            var overlapPrefix = BuildOverlapPrefix(current.ToString(), overlap);
+            current.Clear();
+            if (!string.IsNullOrWhiteSpace(overlapPrefix))
             {
-                chunks.Add(current.ToString().Trim());
-                current.Clear();
-                current.Append(paragraph);
+                current.Append(overlapPrefix);
+                if (current.Length > 0)
+                {
+                    current.AppendLine().AppendLine();
+                }
             }
+
+            current.Append(paragraph);
         }
 
         FlushCurrentIfNeeded(chunks, current);
 
         return chunks
+            .Select(x => x.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct()
             .ToList();
     }
 
     private static void FlushCurrentIfNeeded(List<string> chunks, StringBuilder current)
     {
-        if (current.Length > 0)
+        if (current.Length == 0)
         {
-            chunks.Add(current.ToString().Trim());
-            current.Clear();
+            return;
         }
+
+        chunks.Add(current.ToString().Trim());
+        current.Clear();
     }
 
     private static List<string> SplitIntoParagraphs(string input)
@@ -129,6 +139,23 @@ public sealed class DocumentChunkingService : IDocumentChunkingService
         }
 
         return results;
+    }
+
+    private static string BuildOverlapPrefix(string source, int overlap)
+    {
+        if (string.IsNullOrWhiteSpace(source) || overlap <= 0)
+        {
+            return string.Empty;
+        }
+
+        var tail = source.Length <= overlap ? source : source[^overlap..];
+        var boundary = Math.Max(tail.IndexOf(' '), tail.IndexOf('\n'));
+        if (boundary > 0 && boundary < tail.Length - 1)
+        {
+            tail = tail[(boundary + 1)..];
+        }
+
+        return tail.Trim();
     }
 
     private static string NormalizeText(string input)

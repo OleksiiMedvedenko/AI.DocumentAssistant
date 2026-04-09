@@ -1,19 +1,27 @@
-﻿using AI.DocumentAssistant.Application.Abstractions.Chats;
+﻿using System.Text.RegularExpressions;
+using AI.DocumentAssistant.Application.Abstractions.AI;
+using AI.DocumentAssistant.Application.Abstractions.Chats;
 using AI.DocumentAssistant.Domain.Entities;
+using Microsoft.Extensions.Options;
 
 namespace AI.DocumentAssistant.Application.Chats.Services;
 
 public sealed class HybridChunkRetrievalService : IChunkRetrievalService
 {
-    private readonly VectorChunkRetrievalService _vectorChunkRetrievalService;
-    private readonly KeywordChunkRetrievalService _keywordChunkRetrievalService;
+    private static readonly Regex TokenRegex = new(@"\p{L}[\p{L}\p{Nd}_-]*", RegexOptions.Compiled);
+    private static readonly Regex QuotedPhraseRegex = new("\"([^\"]+)\"", RegexOptions.Compiled);
+
+    private readonly IEmbeddingService _embeddingService;
+    private readonly ChatRetrievalOptions _options;
+    private readonly HashSet<string> _stopWords;
 
     public HybridChunkRetrievalService(
-        VectorChunkRetrievalService vectorChunkRetrievalService,
-        KeywordChunkRetrievalService keywordChunkRetrievalService)
+        IEmbeddingService embeddingService,
+        IOptions<ChatRetrievalOptions> options)
     {
-        _vectorChunkRetrievalService = vectorChunkRetrievalService;
-        _keywordChunkRetrievalService = keywordChunkRetrievalService;
+        _embeddingService = embeddingService;
+        _options = options.Value;
+        _stopWords = _options.StopWords.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     public async Task<IReadOnlyList<DocumentChunk>> GetBestMatchingChunksAsync(
@@ -23,110 +31,297 @@ public sealed class HybridChunkRetrievalService : IChunkRetrievalService
         int take = 6,
         CancellationToken cancellationToken = default)
     {
-        if (chunks.Count == 0)
+        if (chunks.Count == 0 || string.IsNullOrWhiteSpace(question))
+        {
+            return Array.Empty<DocumentChunk>();
+        }
+
+        var finalTake = take > 0 ? take : _options.DefaultTake;
+        var orderedChunks = chunks.OrderBy(x => x.ChunkIndex).ToList();
+        var retrievalQuery = BuildRetrievalQuery(question, chatHistory);
+        var normalizedQuery = retrievalQuery.Trim();
+        var keywords = ExtractKeywords(normalizedQuery);
+        var phrases = ExtractQuotedPhrases(question);
+
+        float[]? queryEmbedding = null;
+        try
+        {
+            queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(normalizedQuery, cancellationToken);
+        }
+        catch
+        {
+            // lexical fallback only
+        }
+
+        var scored = orderedChunks
+            .Select(chunk => ScoreChunk(chunk, keywords, phrases, queryEmbedding))
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Chunk.ChunkIndex)
+            .ToList();
+
+        var best = scored
+            .Where(x => x.Score >= _options.MinAcceptedScore)
+            .Take(finalTake)
+            .Select(x => x.Chunk)
+            .ToList();
+
+        if (best.Count == 0)
+        {
+            best = scored
+                .Take(finalTake)
+                .Select(x => x.Chunk)
+                .ToList();
+        }
+
+        if (_options.IncludeNeighborChunks)
+        {
+            best = ExpandWithNeighbors(orderedChunks, scored, best, _options.MaxExpandedChunks, finalTake);
+        }
+
+        return best
+            .DistinctBy(x => x.Id)
+            .OrderBy(x => x.ChunkIndex)
+            .ToList();
+    }
+
+    private RankedChunk ScoreChunk(
+        DocumentChunk chunk,
+        HashSet<string> keywords,
+        IReadOnlyCollection<string> phrases,
+        float[]? queryEmbedding)
+    {
+        var normalizedText = NormalizeForMatch(chunk.Text);
+        if (string.IsNullOrWhiteSpace(normalizedText))
+        {
+            return new RankedChunk(chunk, 0d);
+        }
+
+        var lexicalScore = CalculateLexicalScore(normalizedText, keywords, phrases);
+        var semanticScore = CalculateSemanticScore(queryEmbedding, chunk.Embedding);
+        var finalScore = (_options.LexicalWeight * lexicalScore) + (_options.SemanticWeight * semanticScore);
+
+        return new RankedChunk(chunk, finalScore);
+    }
+
+    private double CalculateLexicalScore(
+        string normalizedChunkText,
+        HashSet<string> keywords,
+        IReadOnlyCollection<string> phrases)
+    {
+        if (keywords.Count == 0 && phrases.Count == 0)
+        {
+            return 0d;
+        }
+
+        double matchedKeywords = 0;
+        double totalOccurrences = 0;
+
+        foreach (var keyword in keywords)
+        {
+            var occurrences = CountOccurrences(normalizedChunkText, keyword);
+            if (occurrences <= 0)
+            {
+                continue;
+            }
+
+            matchedKeywords += 1;
+            totalOccurrences += Math.Min(occurrences, 4);
+        }
+
+        var coverage = keywords.Count == 0 ? 0d : matchedKeywords / keywords.Count;
+        var density = keywords.Count == 0 ? 0d : Math.Min(1d, totalOccurrences / (keywords.Count * 2d));
+        var score = (coverage * 0.7d) + (density * 0.3d);
+
+        foreach (var phrase in phrases)
+        {
+            if (normalizedChunkText.Contains(NormalizeForMatch(phrase), StringComparison.Ordinal))
+            {
+                score += _options.ExactPhraseBoost;
+            }
+        }
+
+        return Math.Min(1.0d, score);
+    }
+
+    private static double CalculateSemanticScore(float[]? queryEmbedding, float[]? chunkEmbedding)
+    {
+        if (queryEmbedding is null || chunkEmbedding is null || queryEmbedding.Length == 0 || chunkEmbedding.Length == 0)
+        {
+            return 0d;
+        }
+
+        var length = Math.Min(queryEmbedding.Length, chunkEmbedding.Length);
+        double dot = 0d;
+        double queryNorm = 0d;
+        double chunkNorm = 0d;
+
+        for (var i = 0; i < length; i++)
+        {
+            dot += queryEmbedding[i] * chunkEmbedding[i];
+            queryNorm += queryEmbedding[i] * queryEmbedding[i];
+            chunkNorm += chunkEmbedding[i] * chunkEmbedding[i];
+        }
+
+        if (queryNorm <= 0d || chunkNorm <= 0d)
+        {
+            return 0d;
+        }
+
+        var cosine = dot / (Math.Sqrt(queryNorm) * Math.Sqrt(chunkNorm));
+        return Math.Clamp((cosine + 1d) / 2d, 0d, 1d);
+    }
+
+    private HashSet<string> ExtractKeywords(string text)
+    {
+        return TokenRegex.Matches(text)
+            .Select(x => NormalizeToken(x.Value))
+            .Where(x => x.Length >= _options.MinLexicalTokensLength)
+            .Where(x => !_stopWords.Contains(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static List<string> ExtractQuotedPhrases(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
         {
             return [];
         }
 
-        var finalTake = take > 0 ? take : 6;
+        return QuotedPhraseRegex.Matches(text)
+            .Select(x => x.Groups[1].Value.Trim())
+            .Where(x => x.Length >= 3)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 
-        var keywordResult = await _keywordChunkRetrievalService.GetBestMatchingChunksAsync(
-            chunks,
-            question,
-            chatHistory,
-            Math.Max(finalTake, 10),
-            cancellationToken);
+    private static string BuildRetrievalQuery(string question, IReadOnlyCollection<string>? chatHistory)
+    {
+        var current = question?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(current))
+        {
+            return string.Empty;
+        }
 
-        var vectorResult = await _vectorChunkRetrievalService.GetBestMatchingChunksAsync(
-            chunks,
-            question,
-            chatHistory,
-            Math.Max(finalTake, 10),
-            cancellationToken);
+        if (chatHistory is null || chatHistory.Count == 0 || !LooksLikeFollowUpQuestion(current))
+        {
+            return current;
+        }
 
-        var scores = new Dictionary<Guid, double>();
-        var byId = chunks.ToDictionary(x => x.Id);
+        var historyWindow = chatHistory
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .TakeLast(2)
+            .Select(x => x.Trim());
 
-        AddRankScores(keywordResult, scores, 1.0);
-        AddRankScores(vectorResult, scores, 1.25);
+        return string.Join(" ", historyWindow.Append(current));
+    }
 
-        var merged = scores
+    private static bool LooksLikeFollowUpQuestion(string question)
+    {
+        var q = question.Trim().ToLowerInvariant();
+        if (q.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 6)
+        {
+            return true;
+        }
+
+        string[] markers = [
+            "a ", "i ", "oraz ", "też", "także", "co z ", "a co z", "czy też",
+            "what about", "and ", "also ", "does it", "is it", "that", "those", "them", "it ", "he ", "she ",
+            "а ", "і ", "це", "що щодо", "а як щодо"
+        ];
+
+        return markers.Any(marker => q.StartsWith(marker, StringComparison.Ordinal));
+    }
+
+    private static string NormalizeForMatch(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var lowered = value.ToLowerInvariant();
+        var collapsed = Regex.Replace(lowered, @"\s+", " ");
+        return collapsed.Trim();
+    }
+
+    private static string NormalizeToken(string value)
+    {
+        return value.Trim().ToLowerInvariant();
+    }
+
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var index = 0;
+
+        while ((index = source.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
+
+    private List<DocumentChunk> ExpandWithNeighbors(
+        IReadOnlyList<DocumentChunk> allChunks,
+        IReadOnlyList<RankedChunk> ranked,
+        IReadOnlyList<DocumentChunk> bestChunks,
+        int maxExpanded,
+        int requestedTake)
+    {
+        var byIndex = allChunks.ToDictionary(x => x.ChunkIndex);
+        var selected = new Dictionary<int, double>();
+
+        foreach (var rankedChunk in ranked.Where(x => bestChunks.Any(y => y.Id == x.Chunk.Id)))
+        {
+            selected[rankedChunk.Chunk.ChunkIndex] = rankedChunk.Score;
+        }
+
+        foreach (var chunk in bestChunks.OrderBy(x => x.ChunkIndex))
+        {
+            if (selected.Count >= maxExpanded)
+            {
+                break;
+            }
+
+            TryAddNeighbor(chunk.ChunkIndex - 1, chunk.ChunkIndex, byIndex, selected);
+            if (selected.Count >= maxExpanded)
+            {
+                break;
+            }
+
+            TryAddNeighbor(chunk.ChunkIndex + 1, chunk.ChunkIndex, byIndex, selected);
+        }
+
+        return selected
             .OrderByDescending(x => x.Value)
-            .Select(x => byId[x.Key])
-            .ToList();
-
-        var expanded = ExpandNeighbors(chunks, merged, finalTake);
-
-        return expanded
+            .ThenBy(x => x.Key)
+            .Take(Math.Max(requestedTake, Math.Min(maxExpanded, selected.Count)))
+            .Select(x => byIndex[x.Key])
             .OrderBy(x => x.ChunkIndex)
-            .Take(finalTake)
             .ToList();
     }
 
-    private static void AddRankScores(
-        IReadOnlyList<DocumentChunk> ranked,
-        IDictionary<Guid, double> scores,
-        double weight)
+    private void TryAddNeighbor(
+        int neighborIndex,
+        int originIndex,
+        IReadOnlyDictionary<int, DocumentChunk> byIndex,
+        IDictionary<int, double> selected)
     {
-        for (var i = 0; i < ranked.Count; i++)
+        if (!byIndex.TryGetValue(neighborIndex, out _))
         {
-            var chunk = ranked[i];
-            var score = weight * (1.0 / (i + 1));
-
-            if (scores.TryGetValue(chunk.Id, out var existing))
-            {
-                scores[chunk.Id] = existing + score;
-            }
-            else
-            {
-                scores[chunk.Id] = score;
-            }
-        }
-    }
-
-    private static List<DocumentChunk> ExpandNeighbors(
-        IReadOnlyCollection<DocumentChunk> allChunks,
-        IReadOnlyList<DocumentChunk> ranked,
-        int targetCount)
-    {
-        var ordered = allChunks.OrderBy(x => x.ChunkIndex).ToList();
-        var byIndex = ordered.ToDictionary(x => x.ChunkIndex);
-        var selected = new HashSet<Guid>();
-        var result = new List<DocumentChunk>();
-
-        foreach (var chunk in ranked)
-        {
-            if (selected.Add(chunk.Id))
-            {
-                result.Add(chunk);
-            }
-
-            if (result.Count >= targetCount)
-            {
-                break;
-            }
-
-            if (byIndex.TryGetValue(chunk.ChunkIndex - 1, out var prev) && selected.Add(prev.Id))
-            {
-                result.Add(prev);
-            }
-
-            if (result.Count >= targetCount)
-            {
-                break;
-            }
-
-            if (byIndex.TryGetValue(chunk.ChunkIndex + 1, out var next) && selected.Add(next.Id))
-            {
-                result.Add(next);
-            }
-
-            if (result.Count >= targetCount)
-            {
-                break;
-            }
+            return;
         }
 
-        return result;
+        if (selected.ContainsKey(neighborIndex))
+        {
+            return;
+        }
+
+        var distancePenalty = Math.Pow(_options.NeighborScorePenalty, Math.Abs(neighborIndex - originIndex));
+        selected[neighborIndex] = distancePenalty;
     }
+
+    private sealed record RankedChunk(DocumentChunk Chunk, double Score);
 }

@@ -17,7 +17,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IDocumentService, DocumentService>();
         services.AddScoped<IChatService, ChatService>();
-        services.AddScoped<IChunkRetrievalService, KeywordChunkRetrievalService>();
+        services.AddScoped<IChunkRetrievalService, HybridChunkRetrievalService>();
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
         services.AddScoped<IDocumentChunkingService, DocumentChunkingService>();
         services.AddScoped<IUsageTrackingService, UsageTrackingService>();
