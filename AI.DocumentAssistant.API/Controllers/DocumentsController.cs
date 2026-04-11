@@ -19,22 +19,45 @@ public sealed class DocumentsController : ControllerBase
     }
 
     [HttpPost("upload")]
-    public async Task<IActionResult> Upload(IFormFile file, CancellationToken cancellationToken)
+    public async Task<IActionResult> Upload([FromForm] UploadDocumentRequest request, CancellationToken cancellationToken)
     {
-        var result = await _documentService.UploadAsync(file, cancellationToken);
+        var result = await _documentService.UploadAsync(
+            new UploadDocumentRequestDto
+            {
+                File = request.File,
+                FolderId = request.FolderId,
+                SmartOrganize = request.SmartOrganize,
+                AllowSystemFolderCreation = request.AllowSystemFolderCreation
+            },
+            cancellationToken);
+
         return Ok(result);
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetAll([FromQuery] Guid? folderId, CancellationToken cancellationToken)
     {
-        return Ok(await _documentService.GetAllAsync(cancellationToken));
+        return Ok(await _documentService.GetAllAsync(folderId, cancellationToken));
     }
 
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id, CancellationToken cancellationToken)
     {
         return Ok(await _documentService.GetByIdAsync(id, cancellationToken));
+    }
+
+    [HttpPatch("{id:guid}/folder")]
+    public async Task<IActionResult> MoveToFolder(Guid id, [FromBody] MoveDocumentToFolderRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.MoveToFolderAsync(
+            id,
+            new MoveDocumentToFolderRequestDto
+            {
+                FolderId = request.FolderId
+            },
+            cancellationToken);
+
+        return Ok(result);
     }
 
     [HttpGet("{documentId:guid}/status")]
@@ -52,10 +75,7 @@ public sealed class DocumentsController : ControllerBase
     }
 
     [HttpGet("{documentId:guid}/extractions/{extractionId:guid}")]
-    public async Task<IActionResult> GetExtractionById(
-        Guid documentId,
-        Guid extractionId,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> GetExtractionById(Guid documentId, Guid extractionId, CancellationToken cancellationToken)
     {
         var result = await _documentService.GetExtractionByIdAsync(documentId, extractionId, cancellationToken);
         return Ok(result);
@@ -69,25 +89,16 @@ public sealed class DocumentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/summarize")]
-    public async Task<IActionResult> Summarize(
-        Guid id,
-        [FromBody] SummarizeDocumentRequest? request,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> Summarize(Guid id, [FromBody] SummarizeDocumentRequest? request, CancellationToken cancellationToken)
     {
         return Ok(await _documentService.SummarizeAsync(
             id,
-            new SummarizeDocumentRequestDto
-            {
-                Language = request?.Language
-            },
+            new SummarizeDocumentRequestDto { Language = request?.Language },
             cancellationToken));
     }
 
     [HttpPost("{id:guid}/extract")]
-    public async Task<IActionResult> Extract(
-        Guid id,
-        [FromBody] ExtractDocumentRequest request,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> Extract(Guid id, [FromBody] ExtractDocumentRequest request, CancellationToken cancellationToken)
     {
         var result = await _documentService.ExtractAsync(
             id,
@@ -103,10 +114,7 @@ public sealed class DocumentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/compare")]
-    public async Task<IActionResult> Compare(
-        Guid id,
-        [FromBody] CompareDocumentsRequest request,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> Compare(Guid id, [FromBody] CompareDocumentsRequest request, CancellationToken cancellationToken)
     {
         var result = await _documentService.CompareAsync(
             id,

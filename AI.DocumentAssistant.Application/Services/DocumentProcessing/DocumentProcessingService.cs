@@ -14,19 +14,22 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
     private readonly IEnumerable<IDocumentTextExtractor> _textExtractors;
     private readonly IDocumentChunkingService _chunkingService;
     private readonly IEmbeddingService _embeddingService;
+    private readonly IDocumentFolderClassifier _documentFolderClassifier;
 
     public DocumentProcessingService(
         AppDbContext dbContext,
         IFileStorageService fileStorageService,
         IEnumerable<IDocumentTextExtractor> textExtractors,
         IDocumentChunkingService chunkingService,
-        IEmbeddingService embeddingService)
+        IEmbeddingService embeddingService,
+        IDocumentFolderClassifier documentFolderClassifier)
     {
         _dbContext = dbContext;
         _fileStorageService = fileStorageService;
         _textExtractors = textExtractors;
         _chunkingService = chunkingService;
         _embeddingService = embeddingService;
+        _documentFolderClassifier = documentFolderClassifier;
     }
 
     public async Task ProcessAsync(Guid documentId, CancellationToken cancellationToken)
@@ -115,6 +118,8 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
                 throw new InvalidOperationException("Document processing did not create any chunks.");
             }
 
+            await AutoAssignFolderAsync(document, cancellationToken);
+
             document.Status = DocumentStatus.Ready;
             document.ProcessedAtUtc = DateTime.UtcNow;
             document.ErrorMessage = null;
@@ -126,8 +131,79 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             document.Status = DocumentStatus.Failed;
             document.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 2000)];
             document.ProcessedAtUtc = DateTime.UtcNow;
-
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private async Task AutoAssignFolderAsync(Document document, CancellationToken cancellationToken)
+    {
+        if (document.FolderId is not null)
+        {
+            document.FolderClassificationStatus = "manual";
+            document.FolderClassificationConfidence ??= 1m;
+            document.WasFolderAutoAssigned = false;
+            return;
+        }
+
+        var existingFolders = await _dbContext.DocumentFolders
+            .Where(x => x.UserId == document.UserId)
+            .ToListAsync(cancellationToken);
+
+        var suggestion = await _documentFolderClassifier.SuggestAsync(document, existingFolders, cancellationToken);
+
+        if (suggestion is null)
+        {
+            document.FolderClassificationStatus = "uncategorized";
+            document.FolderClassificationConfidence = 0m;
+            document.WasFolderAutoAssigned = false;
+            return;
+        }
+
+        document.FolderClassificationConfidence = suggestion.Confidence;
+
+        if (suggestion.ExistingFolderId is Guid existingFolderId && suggestion.Confidence >= 0.70m)
+        {
+            document.FolderId = existingFolderId;
+            document.FolderClassificationStatus = "auto-assigned";
+            document.WasFolderAutoAssigned = true;
+            return;
+        }
+
+        if (suggestion.Confidence >= 0.85m)
+        {
+            var duplicate = await _dbContext.DocumentFolders.FirstOrDefaultAsync(
+                x => x.UserId == document.UserId &&
+                     x.ParentFolderId == null &&
+                     x.Key == suggestion.ProposedKey,
+                cancellationToken);
+
+            if (duplicate is null)
+            {
+                duplicate = new DocumentFolder
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = document.UserId,
+                    ParentFolderId = null,
+                    Key = suggestion.ProposedKey,
+                    Name = suggestion.ProposedName,
+                    NamePl = suggestion.ProposedNamePl,
+                    NameEn = suggestion.ProposedNameEn,
+                    NameUa = suggestion.ProposedNameUa,
+                    IsSystemGenerated = true,
+                    CreatedAtUtc = DateTime.UtcNow
+                };
+
+                _dbContext.DocumentFolders.Add(duplicate);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            document.FolderId = duplicate.Id;
+            document.FolderClassificationStatus = "auto-created-and-assigned";
+            document.WasFolderAutoAssigned = true;
+            return;
+        }
+
+        document.FolderClassificationStatus = "suggested";
+        document.WasFolderAutoAssigned = false;
     }
 }
