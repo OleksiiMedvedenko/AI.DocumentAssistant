@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # Local development configuration
 AI.DocumentAssistant.API/appsettings.Development.json
+
+# Local storage
+AI.DocumentAssistant.API/storage/
