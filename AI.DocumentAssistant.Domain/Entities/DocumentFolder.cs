@@ -17,7 +17,9 @@
 
         public User User { get; set; } = default!;
         public DocumentFolder? ParentFolder { get; set; }
+
         public ICollection<DocumentFolder> Children { get; set; } = new List<DocumentFolder>();
         public ICollection<Document> Documents { get; set; } = new List<Document>();
+        public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
     }
 }

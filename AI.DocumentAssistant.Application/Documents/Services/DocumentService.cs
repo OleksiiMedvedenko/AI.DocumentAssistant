@@ -4,11 +4,13 @@ using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Application.Documents.Dtos;
+using AI.DocumentAssistant.Application.Services.Authentication;
 using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
 
 namespace AI.DocumentAssistant.Application.Documents.Services;
 
@@ -26,6 +28,7 @@ public sealed class DocumentService : IDocumentService
     private readonly IOpenAiService _openAiService;
     private readonly IUsageQuotaService _usageQuotaService;
     private readonly IUsageTrackingService _usageTrackingService;
+    private readonly IDocumentPreviewConverter _documentPreviewConverter;
 
     public DocumentService(
         AppDbContext dbContext,
@@ -34,7 +37,8 @@ public sealed class DocumentService : IDocumentService
         IDocumentProcessingQueue documentProcessingQueue,
         IOpenAiService openAiService,
         IUsageQuotaService usageQuotaService,
-        IUsageTrackingService usageTrackingService)
+        IUsageTrackingService usageTrackingService,
+        IDocumentPreviewConverter documentPreviewConverter)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
@@ -43,6 +47,7 @@ public sealed class DocumentService : IDocumentService
         _openAiService = openAiService;
         _usageQuotaService = usageQuotaService;
         _usageTrackingService = usageTrackingService;
+        _documentPreviewConverter = documentPreviewConverter;
     }
 
     public async Task<DocumentDto> UploadAsync(UploadDocumentRequestDto request, CancellationToken cancellationToken)
@@ -85,6 +90,8 @@ public sealed class DocumentService : IDocumentService
 
         var organizationMode = ResolveOrganizationMode(request);
 
+        var processingProfile = DocumentProcessingProfileResolver.Resolve(file.FileName, file.ContentType);
+
         var document = new Document
         {
             Id = Guid.NewGuid(),
@@ -107,7 +114,11 @@ public sealed class DocumentService : IDocumentService
             FolderClassificationStatus = ResolveInitialClassificationStatus(request),
             FolderClassificationConfidence = request.FolderId is not null ? 1m : null,
             FolderClassificationReason = ResolveInitialClassificationReason(request),
-            WasFolderAutoAssigned = false
+            WasFolderAutoAssigned = false,
+            ProcessingProfile = processingProfile,
+            IsNew = true,
+            AnalyzedAtUtc = null,
+            QuickSummary = null,
         };
 
         _dbContext.Documents.Add(document);
@@ -132,9 +143,40 @@ public sealed class DocumentService : IDocumentService
                 FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                 FolderClassificationStatus = x.FolderClassificationStatus,
                 FolderClassificationConfidence = x.FolderClassificationConfidence,
-                WasFolderAutoAssigned = x.WasFolderAutoAssigned
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned,
+                IsNew = x.IsNew,
+                ProcessingProfile = x.ProcessingProfile,
             })
             .FirstAsync(cancellationToken);
+    }
+
+    public async Task<UploadDocumentsResultDto> UploadManyAsync(
+    UploadDocumentsRequestDto request,
+    CancellationToken cancellationToken)
+    {
+        if (request.Files is null || request.Files.Count == 0)
+        {
+            throw new BadRequestException("At least one file is required.");
+        }
+
+        var result = new UploadDocumentsResultDto();
+
+        foreach (var file in request.Files.Where(static x => x is not null))
+        {
+            var singleResult = await UploadAsync(
+                new UploadDocumentRequestDto
+                {
+                    File = file,
+                    FolderId = request.FolderId,
+                    SmartOrganize = request.SmartOrganize,
+                    AllowSystemFolderCreation = request.AllowSystemFolderCreation
+                },
+                cancellationToken);
+
+            result.Documents.Add(singleResult);
+        }
+
+        return result;
     }
 
     private static DocumentOrganizationMode ResolveOrganizationMode(UploadDocumentRequestDto request)
@@ -592,5 +634,145 @@ public sealed class DocumentService : IDocumentService
         {
             throw new BadRequestException("Document is not ready yet.");
         }
+    }
+
+    public async Task<DocumentPreviewMetaDto> GetPreviewMetaAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new
+            {
+                x.Id,
+                x.OriginalFileName,
+                x.ContentType
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var extension = Path.GetExtension(document.OriginalFileName).ToLowerInvariant();
+
+        if (string.Equals(document.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase) || extension == ".pdf")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = document.ContentType,
+                PreviewKind = "pdf",
+                CanInlinePreview = true
+            };
+        }
+
+        if (extension == ".docx")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = "text/html",
+                PreviewKind = "html",
+                CanInlinePreview = true,
+                Message = "Preview is generated as HTML from the DOCX structure."
+            };
+        }
+
+        if (extension == ".doc")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = document.ContentType,
+                PreviewKind = "download",
+                CanInlinePreview = false,
+                Message = "Legacy DOC files cannot be previewed inline without an external converter."
+            };
+        }
+
+        if (extension is ".txt" or ".md" or ".json" or ".xml" or ".csv" or ".log")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = "text/plain",
+                PreviewKind = "text",
+                CanInlinePreview = true
+            };
+        }
+
+        return new DocumentPreviewMetaDto
+        {
+            DocumentId = document.Id,
+            FileName = document.OriginalFileName,
+            ContentType = document.ContentType,
+            PreviewKind = "download",
+            CanInlinePreview = false,
+            Message = "Inline preview is not available for this file type."
+        };
+    }
+
+    public async Task<(Stream Stream, string ContentType, string FileName)> OpenOriginalFileAsync(
+    Guid documentId,
+    CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new
+            {
+                x.StoragePath,
+                x.ContentType,
+                x.OriginalFileName
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var stream = File.OpenRead(document.StoragePath);
+
+        return (
+            stream,
+            string.IsNullOrWhiteSpace(document.ContentType) ? "application/octet-stream" : document.ContentType,
+            document.OriginalFileName
+        );
+    }
+
+    public async Task<(Stream Stream, string ContentType, string FileName)> OpenPreviewFileAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new
+            {
+                x.StoragePath,
+                x.ContentType,
+                x.OriginalFileName
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        return await _documentPreviewConverter.ConvertToPreviewAsync(
+            document.StoragePath,
+            document.OriginalFileName,
+            document.ContentType,
+            cancellationToken);
     }
 }

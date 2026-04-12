@@ -29,8 +29,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<KeywordChunkRetrievalService>();
         services.AddScoped<VectorChunkRetrievalService>();
 
-        services.AddScoped<IDocumentFolderClassifier, DocumentFolderClassifier>();
+        services.AddScoped<IFolderChatService, FolderChatService>();
+
         services.AddScoped<IDocumentFolderDecisionEngine, DocumentFolderDecisionEngine>();
+
+        services.AddScoped<IDocumentPreviewConverter, DocumentPreviewConverter>();
 
         return services;
     }

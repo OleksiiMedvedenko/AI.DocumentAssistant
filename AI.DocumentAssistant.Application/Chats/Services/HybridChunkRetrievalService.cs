@@ -37,7 +37,12 @@ public sealed class HybridChunkRetrievalService : IChunkRetrievalService
         }
 
         var finalTake = take > 0 ? take : _options.DefaultTake;
-        var orderedChunks = chunks.OrderBy(x => x.ChunkIndex).ToList();
+
+        var orderedChunks = chunks
+            .OrderBy(x => x.DocumentId)
+            .ThenBy(x => x.ChunkIndex)
+            .ToList();
+
         var retrievalQuery = BuildRetrievalQuery(question, chatHistory);
         var normalizedQuery = retrievalQuery.Trim();
         var keywords = ExtractKeywords(normalizedQuery);
@@ -56,6 +61,7 @@ public sealed class HybridChunkRetrievalService : IChunkRetrievalService
         var scored = orderedChunks
             .Select(chunk => ScoreChunk(chunk, keywords, phrases, queryEmbedding))
             .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Chunk.DocumentId)
             .ThenBy(x => x.Chunk.ChunkIndex)
             .ToList();
 
@@ -80,7 +86,8 @@ public sealed class HybridChunkRetrievalService : IChunkRetrievalService
 
         return best
             .DistinctBy(x => x.Id)
-            .OrderBy(x => x.ChunkIndex)
+            .OrderBy(x => x.DocumentId)
+            .ThenBy(x => x.ChunkIndex)
             .ToList();
     }
 
@@ -270,57 +277,74 @@ public sealed class HybridChunkRetrievalService : IChunkRetrievalService
         int maxExpanded,
         int requestedTake)
     {
-        var byIndex = allChunks.ToDictionary(x => x.ChunkIndex);
-        var selected = new Dictionary<int, double>();
+        var byKey = allChunks.ToDictionary(GetChunkKey);
+        var selected = new Dictionary<string, double>();
 
         foreach (var rankedChunk in ranked.Where(x => bestChunks.Any(y => y.Id == x.Chunk.Id)))
         {
-            selected[rankedChunk.Chunk.ChunkIndex] = rankedChunk.Score;
+            selected[GetChunkKey(rankedChunk.Chunk)] = rankedChunk.Score;
         }
 
-        foreach (var chunk in bestChunks.OrderBy(x => x.ChunkIndex))
+        foreach (var chunk in bestChunks
+                     .OrderBy(x => x.DocumentId)
+                     .ThenBy(x => x.ChunkIndex))
         {
             if (selected.Count >= maxExpanded)
             {
                 break;
             }
 
-            TryAddNeighbor(chunk.ChunkIndex - 1, chunk.ChunkIndex, byIndex, selected);
+            TryAddNeighbor(chunk.DocumentId, chunk.ChunkIndex - 1, chunk.ChunkIndex, byKey, selected);
+
             if (selected.Count >= maxExpanded)
             {
                 break;
             }
 
-            TryAddNeighbor(chunk.ChunkIndex + 1, chunk.ChunkIndex, byIndex, selected);
+            TryAddNeighbor(chunk.DocumentId, chunk.ChunkIndex + 1, chunk.ChunkIndex, byKey, selected);
         }
 
         return selected
             .OrderByDescending(x => x.Value)
-            .ThenBy(x => x.Key)
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
             .Take(Math.Max(requestedTake, Math.Min(maxExpanded, selected.Count)))
-            .Select(x => byIndex[x.Key])
-            .OrderBy(x => x.ChunkIndex)
+            .Select(x => byKey[x.Key])
+            .OrderBy(x => x.DocumentId)
+            .ThenBy(x => x.ChunkIndex)
             .ToList();
     }
 
     private void TryAddNeighbor(
+        Guid documentId,
         int neighborIndex,
         int originIndex,
-        IReadOnlyDictionary<int, DocumentChunk> byIndex,
-        IDictionary<int, double> selected)
+        IReadOnlyDictionary<string, DocumentChunk> byKey,
+        IDictionary<string, double> selected)
     {
-        if (!byIndex.TryGetValue(neighborIndex, out _))
+        var neighborKey = GetChunkKey(documentId, neighborIndex);
+
+        if (!byKey.TryGetValue(neighborKey, out _))
         {
             return;
         }
 
-        if (selected.ContainsKey(neighborIndex))
+        if (selected.ContainsKey(neighborKey))
         {
             return;
         }
 
         var distancePenalty = Math.Pow(_options.NeighborScorePenalty, Math.Abs(neighborIndex - originIndex));
-        selected[neighborIndex] = distancePenalty;
+        selected[neighborKey] = distancePenalty;
+    }
+
+    private static string GetChunkKey(DocumentChunk chunk)
+    {
+        return GetChunkKey(chunk.DocumentId, chunk.ChunkIndex);
+    }
+
+    private static string GetChunkKey(Guid documentId, int chunkIndex)
+    {
+        return $"{documentId:N}:{chunkIndex}";
     }
 
     private sealed record RankedChunk(DocumentChunk Chunk, double Score);
