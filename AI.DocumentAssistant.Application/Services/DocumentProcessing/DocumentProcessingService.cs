@@ -14,19 +14,25 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
     private readonly IEnumerable<IDocumentTextExtractor> _textExtractors;
     private readonly IDocumentChunkingService _chunkingService;
     private readonly IEmbeddingService _embeddingService;
+    private readonly IDocumentFolderClassifier _documentFolderClassifier;
+    private readonly IDocumentFolderDecisionEngine _documentFolderDecisionEngine;
 
     public DocumentProcessingService(
         AppDbContext dbContext,
         IFileStorageService fileStorageService,
         IEnumerable<IDocumentTextExtractor> textExtractors,
         IDocumentChunkingService chunkingService,
-        IEmbeddingService embeddingService)
+        IEmbeddingService embeddingService,
+        IDocumentFolderClassifier documentFolderClassifier,
+        IDocumentFolderDecisionEngine documentFolderDecisionEngine)
     {
         _dbContext = dbContext;
         _fileStorageService = fileStorageService;
         _textExtractors = textExtractors;
         _chunkingService = chunkingService;
         _embeddingService = embeddingService;
+        _documentFolderClassifier = documentFolderClassifier;
+        _documentFolderDecisionEngine = documentFolderDecisionEngine;
     }
 
     public async Task ProcessAsync(Guid documentId, CancellationToken cancellationToken)
@@ -42,6 +48,9 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
 
         document.Status = DocumentStatus.Processing;
         document.ErrorMessage = null;
+        document.LastProcessingAttemptAtUtc = DateTime.UtcNow;
+        document.ProcessingAttemptCount += 1;
+
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         try
@@ -72,7 +81,6 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             }
 
             var chunks = _chunkingService.Chunk(document.ExtractedText);
-
             if (chunks.Count == 0)
             {
                 throw new InvalidOperationException("Document text was extracted, but no chunks could be created.");
@@ -115,6 +123,8 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
                 throw new InvalidOperationException("Document processing did not create any chunks.");
             }
 
+            await OrganizeDocumentAsync(document, cancellationToken);
+
             document.Status = DocumentStatus.Ready;
             document.ProcessedAtUtc = DateTime.UtcNow;
             document.ErrorMessage = null;
@@ -129,5 +139,47 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
 
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private async Task OrganizeDocumentAsync(Document document, CancellationToken cancellationToken)
+    {
+        if (document.FolderId is not null)
+        {
+            document.FolderClassificationStatus = "manual";
+            document.FolderClassificationConfidence = 1m;
+            document.FolderClassificationReason = "Folder selected manually during upload.";
+            document.WasFolderAutoAssigned = false;
+            return;
+        }
+
+        if (document.OrganizationMode == DocumentOrganizationMode.Disabled)
+        {
+            document.FolderClassificationStatus = "disabled";
+            document.FolderClassificationConfidence = null;
+            document.FolderClassificationReason = "Smart organization disabled for this document.";
+            document.WasFolderAutoAssigned = false;
+            return;
+        }
+
+        var existingFolders = await _dbContext.DocumentFolders
+            .Where(x => x.UserId == document.UserId)
+            .ToListAsync(cancellationToken);
+
+        var analysis = await _documentFolderClassifier.AnalyzeAsync(
+            document,
+            existingFolders,
+            cancellationToken);
+
+        var decision = await _documentFolderDecisionEngine.DecideAsync(
+            document,
+            analysis,
+            existingFolders,
+            cancellationToken);
+
+        document.FolderId = decision.FolderId;
+        document.FolderClassificationStatus = decision.Status;
+        document.FolderClassificationConfidence = decision.Confidence;
+        document.FolderClassificationReason = decision.Reason;
+        document.WasFolderAutoAssigned = decision.AutoAssigned;
     }
 }

@@ -4,6 +4,7 @@ using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AI.DocumentAssistant.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260411193442_AddDocumentFolders")]
+    partial class AddDocumentFolders
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -78,9 +81,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<bool>("AllowSystemFolderCreation")
-                        .HasColumnType("bit");
-
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -100,10 +100,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Property<decimal?>("FolderClassificationConfidence")
                         .HasColumnType("decimal(5,4)");
 
-                    b.Property<string>("FolderClassificationReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
                     b.Property<string>("FolderClassificationStatus")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
@@ -113,9 +109,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
 
                     b.Property<DateTime?>("LastProcessingAttemptAtUtc")
                         .HasColumnType("datetime2");
-
-                    b.Property<int>("OrganizationMode")
-                        .HasColumnType("int");
 
                     b.Property<string>("OriginalFileName")
                         .IsRequired()
@@ -130,9 +123,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
 
                     b.Property<long>("SizeInBytes")
                         .HasColumnType("bigint");
-
-                    b.Property<bool>("SmartOrganizeRequested")
-                        .HasColumnType("bit");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -160,8 +150,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.HasIndex("FolderId");
 
                     b.HasIndex("UserId", "FolderId", "UploadedAtUtc");
-
-                    b.HasIndex("UserId", "OrganizationMode", "UploadedAtUtc");
 
                     b.ToTable("Documents", (string)null);
                 });

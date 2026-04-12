@@ -16,6 +16,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<AuthService>();
 
         services.AddScoped<IDocumentService, DocumentService>();
+        services.AddScoped<IDocumentFolderService, DocumentFolderService>();
+        services.AddScoped<IDocumentFolderClassifier, DocumentFolderClassifier>();
+
         services.AddScoped<IChatService, ChatService>();
         services.AddScoped<IChunkRetrievalService, HybridChunkRetrievalService>();
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
@@ -25,6 +28,9 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<KeywordChunkRetrievalService>();
         services.AddScoped<VectorChunkRetrievalService>();
+
+        services.AddScoped<IDocumentFolderClassifier, DocumentFolderClassifier>();
+        services.AddScoped<IDocumentFolderDecisionEngine, DocumentFolderDecisionEngine>();
 
         return services;
     }

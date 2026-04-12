@@ -8,6 +8,7 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Abstractions
         DbSet<User> Users { get; }
         DbSet<RefreshToken> RefreshTokens { get; }
         DbSet<Document> Documents { get; }
+        DbSet<DocumentFolder> DocumentFolders { get; }
         DbSet<DocumentChunk> DocumentChunks { get; }
         DbSet<ChatSession> ChatSessions { get; }
         DbSet<ChatMessage> ChatMessages { get; }

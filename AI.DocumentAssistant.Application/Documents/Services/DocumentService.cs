@@ -45,8 +45,9 @@ public sealed class DocumentService : IDocumentService
         _usageTrackingService = usageTrackingService;
     }
 
-    public async Task<DocumentDto> UploadAsync(IFormFile file, CancellationToken cancellationToken)
+    public async Task<DocumentDto> UploadAsync(UploadDocumentRequestDto request, CancellationToken cancellationToken)
     {
+        var file = request.File;
         if (file is null)
         {
             throw new BadRequestException("File is required.");
@@ -58,7 +59,6 @@ public sealed class DocumentService : IDocumentService
         }
 
         var extension = Path.GetExtension(file.FileName);
-
         if (string.IsNullOrWhiteSpace(extension) || !AllowedExtensions.Contains(extension))
         {
             throw new BadRequestException("Unsupported file type. Allowed: pdf, docx, txt, md, csv, json, xml, log.");
@@ -66,29 +66,48 @@ public sealed class DocumentService : IDocumentService
 
         var userId = _currentUserService.GetUserId();
 
-        await _usageQuotaService.EnsureWithinQuotaAsync(
-            userId,
-            UsageType.UploadDocument,
-            1,
-            cancellationToken);
+        if (request.FolderId is not null)
+        {
+            var folderExists = await _dbContext.DocumentFolders.AnyAsync(
+                x => x.Id == request.FolderId && x.UserId == userId,
+                cancellationToken);
+
+            if (!folderExists)
+            {
+                throw new BadRequestException("Selected folder does not exist.");
+            }
+        }
 
         var fileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
 
         await using var stream = file.OpenReadStream();
         var storagePath = await _fileStorageService.SaveAsync(stream, fileName, cancellationToken);
 
+        var organizationMode = ResolveOrganizationMode(request);
+
         var document = new Document
         {
             Id = Guid.NewGuid(),
             UserId = userId,
+            FolderId = request.FolderId,
             FileName = fileName,
             OriginalFileName = file.FileName,
-            ContentType = file.ContentType ?? "application/octet-stream",
+            ContentType = string.IsNullOrWhiteSpace(file.ContentType)
+                ? "application/octet-stream"
+                : file.ContentType,
             SizeInBytes = file.Length,
             StoragePath = storagePath,
-            Status = DocumentStatus.Queued,
+            Status = DocumentStatus.Uploaded,
             UploadedAtUtc = DateTime.UtcNow,
-            ErrorMessage = null
+
+            OrganizationMode = organizationMode,
+            SmartOrganizeRequested = request.SmartOrganize,
+            AllowSystemFolderCreation = request.AllowSystemFolderCreation,
+
+            FolderClassificationStatus = ResolveInitialClassificationStatus(request),
+            FolderClassificationConfidence = request.FolderId is not null ? 1m : null,
+            FolderClassificationReason = ResolveInitialClassificationReason(request),
+            WasFolderAutoAssigned = false
         };
 
         _dbContext.Documents.Add(document);
@@ -96,30 +115,79 @@ public sealed class DocumentService : IDocumentService
 
         await _documentProcessingQueue.EnqueueAsync(document.Id, cancellationToken);
 
-        await _usageTrackingService.TrackAsync(
-            userId,
-            UsageType.UploadDocument,
-            1,
-            cancellationToken,
-            referenceId: document.Id.ToString());
-
-        return new DocumentDto
-        {
-            Id = document.Id,
-            OriginalFileName = document.OriginalFileName,
-            ContentType = document.ContentType,
-            SizeInBytes = document.SizeInBytes,
-            Status = document.Status,
-            UploadedAtUtc = document.UploadedAtUtc
-        };
+        return await _dbContext.Documents
+            .Where(x => x.Id == document.Id)
+            .Select(x => new DocumentDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                ContentType = x.ContentType,
+                SizeInBytes = x.SizeInBytes,
+                Status = x.Status,
+                UploadedAtUtc = x.UploadedAtUtc,
+                FolderId = x.FolderId,
+                FolderName = x.Folder != null ? x.Folder.Name : null,
+                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                FolderClassificationStatus = x.FolderClassificationStatus,
+                FolderClassificationConfidence = x.FolderClassificationConfidence,
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned
+            })
+            .FirstAsync(cancellationToken);
     }
 
-    public async Task<List<DocumentDto>> GetAllAsync(CancellationToken cancellationToken)
+    private static DocumentOrganizationMode ResolveOrganizationMode(UploadDocumentRequestDto request)
+    {
+        if (request.FolderId is not null)
+        {
+            return DocumentOrganizationMode.Manual;
+        }
+
+        if (!request.SmartOrganize)
+        {
+            return DocumentOrganizationMode.Disabled;
+        }
+
+        return request.AllowSystemFolderCreation
+            ? DocumentOrganizationMode.AutoAssignOrCreate
+            : DocumentOrganizationMode.AutoAssignExistingOnly;
+    }
+
+    private static string ResolveInitialClassificationStatus(UploadDocumentRequestDto request)
+    {
+        if (request.FolderId is not null)
+        {
+            return "manual";
+        }
+
+        return request.SmartOrganize ? "pending" : "disabled";
+    }
+
+    private static string ResolveInitialClassificationReason(UploadDocumentRequestDto request)
+    {
+        if (request.FolderId is not null)
+        {
+            return "Folder selected by user.";
+        }
+
+        return request.SmartOrganize
+            ? "Document queued for smart organization."
+            : "Smart organization disabled by user.";
+    }
+
+    public async Task<List<DocumentDto>> GetAllAsync(Guid? folderId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
 
-        return await _dbContext.Documents
-            .Where(x => x.UserId == userId)
+        var query = _dbContext.Documents.Where(x => x.UserId == userId);
+
+        if (folderId.HasValue)
+        {
+            query = query.Where(x => x.FolderId == folderId.Value);
+        }
+
+        return await query
             .OrderByDescending(x => x.UploadedAtUtc)
             .Select(x => new DocumentDto
             {
@@ -128,7 +196,15 @@ public sealed class DocumentService : IDocumentService
                 ContentType = x.ContentType,
                 SizeInBytes = x.SizeInBytes,
                 Status = x.Status,
-                UploadedAtUtc = x.UploadedAtUtc
+                UploadedAtUtc = x.UploadedAtUtc,
+                FolderId = x.FolderId,
+                FolderName = x.Folder != null ? x.Folder.Name : null,
+                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                FolderClassificationStatus = x.FolderClassificationStatus,
+                FolderClassificationConfidence = x.FolderClassificationConfidence,
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned
             })
             .ToListAsync(cancellationToken);
     }
@@ -149,7 +225,15 @@ public sealed class DocumentService : IDocumentService
                 Summary = x.Summary,
                 UploadedAtUtc = x.UploadedAtUtc,
                 ProcessedAtUtc = x.ProcessedAtUtc,
-                ErrorMessage = x.ErrorMessage
+                ErrorMessage = x.ErrorMessage,
+                FolderId = x.FolderId,
+                FolderName = x.Folder != null ? x.Folder.Name : null,
+                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                FolderClassificationStatus = x.FolderClassificationStatus,
+                FolderClassificationConfidence = x.FolderClassificationConfidence,
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned
             })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -174,6 +258,58 @@ public sealed class DocumentService : IDocumentService
             .FirstOrDefaultAsync(cancellationToken);
 
         return document ?? throw new NotFoundException("Document not found.");
+    }
+
+    public async Task<DocumentDto> MoveToFolderAsync(Guid documentId, MoveDocumentToFolderRequestDto request, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        if (request.FolderId is not null)
+        {
+            var folderExists = await _dbContext.DocumentFolders.AnyAsync(
+                x => x.Id == request.FolderId && x.UserId == userId,
+                cancellationToken);
+
+            if (!folderExists)
+            {
+                throw new BadRequestException("Folder not found.");
+            }
+        }
+
+        document.FolderId = request.FolderId;
+        document.FolderClassificationStatus = "manual";
+        document.WasFolderAutoAssigned = false;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return await _dbContext.Documents
+            .Where(x => x.Id == documentId)
+            .Select(x => new DocumentDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                ContentType = x.ContentType,
+                SizeInBytes = x.SizeInBytes,
+                Status = x.Status,
+                UploadedAtUtc = x.UploadedAtUtc,
+                FolderId = x.FolderId,
+                FolderName = x.Folder != null ? x.Folder.Name : null,
+                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                FolderClassificationStatus = x.FolderClassificationStatus,
+                FolderClassificationConfidence = x.FolderClassificationConfidence,
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned
+            })
+            .FirstAsync(cancellationToken);
     }
 
     public async Task DeleteAsync(Guid documentId, CancellationToken cancellationToken)
