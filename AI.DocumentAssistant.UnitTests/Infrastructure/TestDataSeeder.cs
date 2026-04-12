@@ -30,19 +30,40 @@ public static class TestDataSeeder
             await dbContext.SaveChangesAsync();
         }
 
+        var extension = Path.GetExtension(fileName);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            extension = ".txt";
+        }
+
         var document = new Document
         {
             Id = Guid.NewGuid(),
             UserId = user.Id,
-            FileName = fileName,
+            FileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}",
             OriginalFileName = fileName,
             ContentType = "text/plain",
             SizeInBytes = text.Length,
-            StoragePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.txt"),
+            StoragePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}"),
             Status = DocumentStatus.Ready,
             ExtractedText = text,
             UploadedAtUtc = DateTime.UtcNow,
-            ProcessedAtUtc = DateTime.UtcNow
+            ProcessedAtUtc = DateTime.UtcNow,
+
+            OrganizationMode = DocumentOrganizationMode.Disabled,
+            SmartOrganizeRequested = false,
+            AllowSystemFolderCreation = false,
+            FolderClassificationStatus = "disabled",
+            FolderClassificationConfidence = null,
+            FolderClassificationReason = "Seeded test document.",
+            WasFolderAutoAssigned = false,
+
+            ProcessingProfile = DocumentProcessingProfile.Standard,
+            IsNew = false,
+            AnalyzedAtUtc = DateTime.UtcNow,
+            QuickSummary = null,
+            Summary = null,
+            ErrorMessage = null
         };
 
         var chunks = Chunk(text)
