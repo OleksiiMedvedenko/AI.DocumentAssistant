@@ -92,7 +92,19 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                 ["legal"] =
                 [
                     "contract", "agreement", "umowa", "terms", "legal", "compliance"
+                ],
+                ["psychology"] =
+                [
+                    "psychologia", "psycholog", "psychologist", "psychoterapia", "therapy", "terapia"
                 ]
+            };
+
+        // Topics that usually describe project/domain context inside a CV, not the candidate specialization.
+        private static readonly HashSet<string> CvWeakTopics =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "api",
+                "ksef"
             };
 
         private readonly IOpenAiService _openAiService;
@@ -108,20 +120,22 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             CancellationToken cancellationToken)
         {
             var source = BuildSource(document);
+            var prioritySource = BuildPrioritySource(document);
 
-            var highPrecision = TryHighPrecisionClassification(document, existingFolders, source);
+            var highPrecision = TryHighPrecisionClassification(document, existingFolders, source, prioritySource);
             if (highPrecision is not null)
             {
                 return highPrecision;
             }
 
-            var local = AnalyzeLocally(document, existingFolders, source);
+            var local = AnalyzeLocally(document, existingFolders, source, prioritySource);
 
             var bestLocal = local.ExistingFolderCandidates
                 .OrderByDescending(x => x.Score)
                 .FirstOrDefault();
 
-            if (bestLocal is not null && bestLocal.Score >= 0.88m)
+            // Stop early much more often to keep the classifier fast.
+            if (bestLocal is not null && bestLocal.Score >= 0.64m)
             {
                 local.SuggestedExistingFolderId = bestLocal.FolderId;
                 local.Confidence = Math.Max(local.Confidence, bestLocal.Score);
@@ -129,7 +143,7 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                 return local;
             }
 
-            if (local.Confidence >= 0.93m)
+            if (local.Confidence >= 0.80m)
             {
                 return local;
             }
@@ -147,16 +161,26 @@ namespace AI.DocumentAssistant.Application.Documents.Services
         private static DocumentFolderAnalysisResultDto? TryHighPrecisionClassification(
             Document document,
             IReadOnlyCollection<DocumentFolder> existingFolders,
-            string source)
+            string source,
+            string prioritySource)
         {
-            var documentType = DetectDocumentType(source);
-            var topic = DetectTopic(source);
-
-            // Dokumentacja o KSeF / API / fakturach nie może wpadać do faktur tylko dlatego,
-            // że zawiera słowo "faktura".
-            if (LooksLikeTechnicalDocumentation(source))
+            // Prioritize CV detection before documentation to avoid CVs with project descriptions
+            // being redirected to Documentation/API/KSeF.
+            if (LooksLikeCv(prioritySource))
             {
-                return BuildHierarchicalResult(
+                var topic = DetectTopicForCv(source, prioritySource);
+                return BuildHighPrecisionResult(
+                    documentType: "cv",
+                    topic: topic,
+                    existingFolders: existingFolders,
+                    confidence: 0.97m,
+                    reason: "Strong CV/resume indicators detected.");
+            }
+
+            if (LooksLikeTechnicalDocumentation(prioritySource) && !LooksLikeCv(prioritySource))
+            {
+                var topic = DetectTopic(source, "documentation");
+                return BuildHighPrecisionResult(
                     documentType: "documentation",
                     topic: topic,
                     existingFolders: existingFolders,
@@ -166,9 +190,10 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                         : "Technical documentation detected.");
             }
 
-            if (LooksLikeInvoice(source))
+            if (LooksLikeInvoice(source) && !LooksLikeTechnicalDocumentation(prioritySource))
             {
-                return BuildHierarchicalResult(
+                var topic = DetectTopic(source, "invoices");
+                return BuildHighPrecisionResult(
                     documentType: "invoices",
                     topic: topic,
                     existingFolders: existingFolders,
@@ -176,21 +201,10 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                     reason: "Strong invoice indicators detected.");
             }
 
-            if (LooksLikeCv(source))
+            if (LooksLikeContract(prioritySource))
             {
-                return BuildHierarchicalResult(
-                    documentType: "cv",
-                    topic: topic,
-                    existingFolders: existingFolders,
-                    confidence: 0.97m,
-                    reason: topic == "it"
-                        ? "Strong IT CV/resume indicators detected."
-                        : "Strong CV/resume indicators detected.");
-            }
-
-            if (LooksLikeContract(source))
-            {
-                return BuildHierarchicalResult(
+                var topic = DetectTopic(source, "contracts");
+                return BuildHighPrecisionResult(
                     documentType: "contracts",
                     topic: topic,
                     existingFolders: existingFolders,
@@ -204,38 +218,26 @@ namespace AI.DocumentAssistant.Application.Documents.Services
         private static DocumentFolderAnalysisResultDto AnalyzeLocally(
             Document document,
             IReadOnlyCollection<DocumentFolder> existingFolders,
-            string source)
+            string source,
+            string prioritySource)
         {
-            var documentType = DetectDocumentType(source);
-            var topic = DetectTopic(source);
+            var signals = BuildDocumentSignals(source, prioritySource);
 
-            var typeConfidence = EstimateCategoryConfidence(source, documentType);
-            var topicConfidence = EstimateTopicConfidence(source, topic);
+            var typeConfidence = EstimateCategoryConfidence(source, signals.DocumentType);
+            var topicConfidence = EstimateTopicConfidence(source, signals.Topic);
 
-            var candidates = new List<DocumentFolderCandidateDto>();
+            var pathCandidates = BuildFolderPathCandidates(existingFolders, document, source, signals);
 
-            foreach (var folder in existingFolders)
-            {
-                var score = ScoreFolder(folder, document, source, documentType, topic, existingFolders, out var reason);
-                if (score <= 0m)
-                {
-                    continue;
-                }
-
-                candidates.Add(new DocumentFolderCandidateDto
-                {
-                    FolderId = folder.Id,
-                    FolderKey = folder.Key,
-                    FolderName = folder.Name,
-                    Score = score,
-                    Reason = reason
-                });
-            }
-
-            var ordered = candidates
-                .OrderByDescending(x => x.Score)
-                .ThenBy(x => x.FolderName)
+            var ordered = pathCandidates
                 .Take(7)
+                .Select(x => new DocumentFolderCandidateDto
+                {
+                    FolderId = x.Leaf.Id,
+                    FolderKey = x.Leaf.Key,
+                    FolderName = x.Leaf.Name,
+                    Score = x.Score,
+                    Reason = x.Reason
+                })
                 .ToList();
 
             var bestExisting = ordered.FirstOrDefault();
@@ -243,15 +245,15 @@ namespace AI.DocumentAssistant.Application.Documents.Services
 
             return new DocumentFolderAnalysisResultDto
             {
-                Category = documentType,
+                Category = signals.DocumentType,
                 Confidence = finalConfidence <= 0m ? 0.35m : finalConfidence,
                 Reason = bestExisting?.Reason
-                    ?? (!string.Equals(documentType, "unknown", StringComparison.OrdinalIgnoreCase)
-                        ? $"Detected type '{documentType}' with topic '{topic}'."
+                    ?? (!string.Equals(signals.DocumentType, "unknown", StringComparison.OrdinalIgnoreCase)
+                        ? $"Detected type '{signals.DocumentType}' with topic '{signals.Topic}'."
                         : "Category is unknown."),
                 SuggestedExistingFolderId = bestExisting?.FolderId,
                 ExistingFolderCandidates = ordered,
-                ProposedFolder = BuildDefaultProposal(documentType, topic, existingFolders)
+                ProposedFolder = BuildDefaultProposal(signals.DocumentType, signals.Topic, existingFolders)
             };
         }
 
@@ -260,14 +262,17 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             IReadOnlyCollection<DocumentFolder> existingFolders,
             CancellationToken cancellationToken)
         {
+            // Keep prompt size bounded for latency.
             var foldersText = string.Join(
                 "\n",
-                existingFolders.Select(x =>
-                    $"- id: {x.Id}, parentId: {x.ParentFolderId}, key: {x.Key}, names: [{x.NamePl} | {x.NameEn} | {x.NameUa} | {x.Name}]"));
+                existingFolders
+                    .Take(30)
+                    .Select(x =>
+                        $"- id: {x.Id}, parentId: {x.ParentFolderId}, key: {x.Key}, names: [{x.NamePl} | {x.NameEn} | {x.NameUa} | {x.Name}]"));
 
             var sampleText = document.ExtractedText is null
                 ? string.Empty
-                : document.ExtractedText[..Math.Min(document.ExtractedText.Length, 6000)];
+                : document.ExtractedText[..Math.Min(document.ExtractedText.Length, 2800)];
 
             var prompt = $$"""
 You analyze a document and recommend how it should be organized in a hierarchical folder tree.
@@ -291,8 +296,8 @@ Return ONLY valid JSON with this exact shape:
 Rules:
 - Distinguish document type from subject/topic.
 - A technical document about invoices/KSeF is documentation, not an invoice.
-- CVs should prefer a relevant subfolder when one exists, e.g. CV/IT.
-- Prefer the deepest suitable existing folder.
+- A CV mentioning API/KSeF projects is still a CV.
+- Prefer the deepest suitable existing folder only when the hierarchy is consistent.
 - If no good folder exists, propose a concise folder and set parentFolderId if a suitable parent exists.
 - Use confidence between 0.00 and 1.00.
 
@@ -363,7 +368,7 @@ Document excerpt:
                         FolderId = aiFolder.Id,
                         FolderKey = aiFolder.Key,
                         FolderName = aiFolder.Name,
-                        Score = Math.Max(ai.Confidence, 0.76m),
+                        Score = Math.Max(ai.Confidence, 0.72m),
                         Reason = $"AI matched this folder. {ai.Reason}"
                     });
                 }
@@ -408,30 +413,165 @@ Document excerpt:
             return builder.ToString().ToLowerInvariant();
         }
 
-        private static string DetectDocumentType(string source)
+        private static string BuildPrioritySource(Document document)
         {
-            foreach (var pair in CategoryAliases)
+            var builder = new StringBuilder();
+            builder.AppendLine(document.OriginalFileName);
+            builder.AppendLine(document.ContentType);
+
+            if (!string.IsNullOrWhiteSpace(document.ExtractedText))
             {
-                if (pair.Value.Any(source.Contains))
-                {
-                    return pair.Key;
-                }
+                builder.AppendLine(document.ExtractedText[..Math.Min(document.ExtractedText.Length, 2500)]);
             }
 
-            return "unknown";
+            return builder.ToString().ToLowerInvariant();
         }
 
-        private static string DetectTopic(string source)
+        private static DocumentSignals BuildDocumentSignals(string source, string prioritySource)
         {
-            foreach (var pair in TopicAliases)
+            var documentType = DetectDocumentType(source, prioritySource);
+            var topic = documentType == "cv"
+                ? DetectTopicForCv(source, prioritySource)
+                : DetectTopic(source, documentType);
+
+            var tokens = Tokenize(source);
+
+            var typeAliases = CategoryAliases.TryGetValue(documentType, out var foundTypeAliases)
+                ? new HashSet<string>(foundTypeAliases, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var topicAliases = TopicAliases.TryGetValue(topic, out var foundTopicAliases)
+                ? new HashSet<string>(foundTopicAliases, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            return new DocumentSignals
             {
-                if (pair.Value.Any(source.Contains))
-                {
-                    return pair.Key;
-                }
+                DocumentType = documentType,
+                Topic = topic,
+                Tokens = tokens,
+                TypeAliases = typeAliases,
+                TopicAliases = topicAliases
+            };
+        }
+
+        private static string DetectDocumentType(string source, string prioritySource)
+        {
+            var scores = CategoryAliases.Keys.ToDictionary(x => x, _ => 0m, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in CategoryAliases)
+            {
+                scores[pair.Key] += CountMatches(source, pair.Value) * 1.0m;
+                scores[pair.Key] += CountMatches(prioritySource, pair.Value) * 1.4m;
             }
 
-            return "general";
+            if (LooksLikeCv(prioritySource))
+            {
+                scores["cv"] += 4.0m;
+                scores["documentation"] -= 1.0m;
+                scores["api-docs"] -= 0.5m;
+            }
+
+            if (LooksLikeInvoice(source) && !LooksLikeTechnicalDocumentation(prioritySource))
+            {
+                scores["invoices"] += 4.0m;
+            }
+
+            if (LooksLikeTechnicalDocumentation(prioritySource) && !LooksLikeCv(prioritySource))
+            {
+                scores["documentation"] += 3.0m;
+            }
+
+            if (LooksLikeContract(prioritySource))
+            {
+                scores["contracts"] += 3.5m;
+            }
+
+            var best = scores
+                .OrderByDescending(x => x.Value)
+                .FirstOrDefault();
+
+            return best.Value <= 0m ? "unknown" : best.Key;
+        }
+
+        private static string DetectTopic(string source, string documentType)
+        {
+            var scores = TopicAliases.Keys.ToDictionary(x => x, _ => 0m, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in TopicAliases)
+            {
+                scores[pair.Key] += CountMatches(source, pair.Value);
+            }
+
+            // Dynamic biasing by document type.
+            if (documentType == "documentation")
+            {
+                scores["api"] += 0.5m;
+                scores["ksef"] += 0.5m;
+            }
+
+            if (documentType == "invoices")
+            {
+                scores["finance"] += 0.8m;
+            }
+
+            if (documentType == "contracts")
+            {
+                scores["legal"] += 0.8m;
+            }
+
+            var best = scores
+                .OrderByDescending(x => x.Value)
+                .FirstOrDefault();
+
+            return best.Value < 1m ? "general" : best.Key;
+        }
+
+        private static string DetectTopicForCv(string source, string prioritySource)
+        {
+            // CV specialization should be driven mostly by the profile / header portion,
+            // not by project descriptions later in the document.
+            var strongTopics = new[] { "it", "legal", "finance", "hr", "psychology" };
+
+            var scores = strongTopics.ToDictionary(x => x, _ => 0m, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var topic in strongTopics)
+            {
+                if (!TopicAliases.TryGetValue(topic, out var aliases))
+                {
+                    continue;
+                }
+
+                scores[topic] += CountMatches(source, aliases) * 0.7m;
+                scores[topic] += CountMatches(prioritySource, aliases) * 1.6m;
+            }
+
+            var bestStrong = scores
+                .OrderByDescending(x => x.Value)
+                .FirstOrDefault();
+
+            if (bestStrong.Value >= 1.2m)
+            {
+                return bestStrong.Key;
+            }
+
+            // Weak project/domain topics like API/KSeF should not override CV specialization.
+            var weakScores = CvWeakTopics.ToDictionary(x => x, _ => 0m, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var topic in CvWeakTopics)
+            {
+                if (!TopicAliases.TryGetValue(topic, out var aliases))
+                {
+                    continue;
+                }
+
+                weakScores[topic] += CountMatches(prioritySource, aliases) * 0.6m;
+            }
+
+            var bestWeak = weakScores
+                .OrderByDescending(x => x.Value)
+                .FirstOrDefault();
+
+            return bestWeak.Value >= 2.0m ? bestWeak.Key : "general";
         }
 
         private static decimal EstimateCategoryConfidence(string source, string category)
@@ -446,7 +586,7 @@ Document excerpt:
                 return 0.40m;
             }
 
-            var matches = aliases.Count(source.Contains);
+            var matches = CountMatches(source, aliases);
 
             return matches switch
             {
@@ -471,7 +611,7 @@ Document excerpt:
                 return 0.40m;
             }
 
-            var matches = aliases.Count(source.Contains);
+            var matches = CountMatches(source, aliases);
 
             return matches switch
             {
@@ -481,6 +621,175 @@ Document excerpt:
                 1 => 0.58m,
                 _ => 0.35m
             };
+        }
+
+        private static List<FolderPathCandidate> BuildFolderPathCandidates(
+            IReadOnlyCollection<DocumentFolder> folders,
+            Document document,
+            string source,
+            DocumentSignals signals)
+        {
+            var result = new List<FolderPathCandidate>();
+
+            foreach (var leaf in folders)
+            {
+                var parent = leaf.ParentFolderId is null
+                    ? null
+                    : folders.FirstOrDefault(x => x.Id == leaf.ParentFolderId);
+
+                var pathTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var token in GetFolderTokens(leaf))
+                {
+                    pathTokens.Add(token);
+                }
+
+                if (parent is not null)
+                {
+                    foreach (var token in GetFolderTokens(parent))
+                    {
+                        pathTokens.Add(token);
+                    }
+                }
+
+                var score = ScorePath(pathTokens, leaf, parent, document, source, signals, out var reason);
+                if (score <= 0m)
+                {
+                    continue;
+                }
+
+                result.Add(new FolderPathCandidate
+                {
+                    Leaf = leaf,
+                    Parent = parent,
+                    PathKey = parent is null ? leaf.Key : $"{parent.Key}/{leaf.Key}",
+                    PathDisplay = parent is null ? leaf.Name : $"{parent.Name} -> {leaf.Name}",
+                    Tokens = pathTokens,
+                    Score = score,
+                    Reason = reason
+                });
+            }
+
+            return result
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Parent is not null)
+                .ThenBy(x => x.PathDisplay)
+                .ToList();
+        }
+
+        private static decimal ScorePath(
+            HashSet<string> pathTokens,
+            DocumentFolder leaf,
+            DocumentFolder? parent,
+            Document document,
+            string source,
+            DocumentSignals signals,
+            out string reason)
+        {
+            decimal score = 0m;
+            var reasons = new List<string>();
+
+            var leafTokens = GetFolderTokens(leaf);
+            var parentTokens = parent is null ? Array.Empty<string>() : GetFolderTokens(parent);
+
+            var leafTypeMatch = MatchesSemantic(leafTokens, signals.DocumentType, signals.TypeAliases);
+            var parentTypeMatch = MatchesSemantic(parentTokens, signals.DocumentType, signals.TypeAliases);
+
+            var leafTopicMatch = signals.Topic != "general" &&
+                                 MatchesSemantic(leafTokens, signals.Topic, signals.TopicAliases);
+
+            var parentTopicMatch = signals.Topic != "general" &&
+                                   MatchesSemantic(parentTokens, signals.Topic, signals.TopicAliases);
+
+            if (leafTypeMatch)
+            {
+                score += 0.26m;
+                reasons.Add("leaf matches document type");
+            }
+
+            if (parentTypeMatch)
+            {
+                score += 0.34m;
+                reasons.Add("parent matches document type");
+            }
+
+            if (leafTopicMatch)
+            {
+                score += 0.30m;
+                reasons.Add("leaf matches document topic");
+            }
+
+            if (parentTopicMatch)
+            {
+                score += 0.12m;
+                reasons.Add("parent matches document topic");
+            }
+
+            var overlapCount = pathTokens.Count(token => signals.Tokens.Contains(token));
+            if (overlapCount > 0)
+            {
+                score += Math.Min(0.14m, overlapCount * 0.03m);
+                reasons.Add("path tokens appear in document content");
+            }
+
+            if (!string.IsNullOrWhiteSpace(document.OriginalFileName) &&
+                pathTokens.Any(x => document.OriginalFileName.Contains(x, StringComparison.OrdinalIgnoreCase)))
+            {
+                score += 0.06m;
+                reasons.Add("path tokens appear in file name");
+            }
+
+            if (parent is not null && parentTypeMatch && leafTopicMatch)
+            {
+                score += 0.10m;
+                reasons.Add("parent-child hierarchy is consistent");
+            }
+
+            var leafSpecialization = DetectFolderSpecialization(leafTokens);
+            if (signals.DocumentType == "cv" &&
+                signals.Topic != "general" &&
+                parentTypeMatch &&
+                leafSpecialization is not null &&
+                !string.Equals(leafSpecialization, signals.Topic, StringComparison.OrdinalIgnoreCase))
+            {
+                score -= 0.28m;
+                reasons.Add("specialized leaf does not match CV topic");
+            }
+
+            if (signals.DocumentType == "cv" &&
+                signals.Topic == "general" &&
+                parentTypeMatch &&
+                leafSpecialization is not null)
+            {
+                score -= 0.14m;
+                reasons.Add("generic CV should not prefer a specialized child");
+            }
+
+            score = Math.Clamp(score, 0m, 0.98m);
+
+            reason = reasons.Count == 0
+                ? "Weak path match."
+                : string.Join("; ", reasons) + ".";
+
+            return score;
+        }
+
+        private static string? DetectFolderSpecialization(string[] tokens)
+        {
+            foreach (var pair in TopicAliases)
+            {
+                if (pair.Key == "api" || pair.Key == "ksef")
+                {
+                    continue;
+                }
+
+                if (pair.Value.Any(alias => tokens.Any(t => t.Contains(alias, StringComparison.OrdinalIgnoreCase))))
+                {
+                    return pair.Key;
+                }
+            }
+
+            return null;
         }
 
         private static bool LooksLikeInvoice(string source)
@@ -500,13 +809,7 @@ Document excerpt:
                 "buyer"
             };
 
-            // Ale dokumentacja o KSeF / API / instrukcja nie jest samą fakturą.
-            if (LooksLikeTechnicalDocumentation(source))
-            {
-                return false;
-            }
-
-            return invoiceSignals.Count(source.Contains) >= 3;
+            return CountMatches(source, invoiceSignals) >= 3;
         }
 
         private static bool LooksLikeTechnicalDocumentation(string source)
@@ -530,7 +833,7 @@ Document excerpt:
                 "integration"
             };
 
-            return documentationSignals.Count(source.Contains) >= 2;
+            return CountMatches(source, documentationSignals) >= 2;
         }
 
         private static bool LooksLikeCv(string source)
@@ -548,7 +851,7 @@ Document excerpt:
                 "projects"
             };
 
-            return strongSignals.Count(source.Contains) >= 3;
+            return CountMatches(source, strongSignals) >= 3;
         }
 
         private static bool LooksLikeContract(string source)
@@ -564,251 +867,100 @@ Document excerpt:
                 "effective date"
             };
 
-            return strongSignals.Count(source.Contains) >= 2;
+            return CountMatches(source, strongSignals) >= 2;
         }
 
-        private static DocumentFolderAnalysisResultDto BuildHierarchicalResult(
+        private static DocumentFolderAnalysisResultDto BuildHighPrecisionResult(
             string documentType,
             string topic,
             IReadOnlyCollection<DocumentFolder> existingFolders,
             decimal confidence,
             string reason)
         {
-            var ranked = existingFolders
-                .Select(folder => new
-                {
-                    Folder = folder,
-                    Score = ScoreHierarchicalFolderMatch(folder, existingFolders, documentType, topic)
-                })
-                .Where(x => x.Score > 0m)
-                .OrderByDescending(x => x.Score)
-                .ThenByDescending(x => HasParentMatchBonus(x.Folder, existingFolders, documentType, topic))
-                .ToList();
+            var signals = new DocumentSignals
+            {
+                DocumentType = documentType,
+                Topic = topic,
+                Tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                TypeAliases = CategoryAliases.TryGetValue(documentType, out var typeAliases)
+                    ? new HashSet<string>(typeAliases, StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                TopicAliases = TopicAliases.TryGetValue(topic, out var topicAliases)
+                    ? new HashSet<string>(topicAliases, StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            };
 
-            var best = ranked.FirstOrDefault();
+            var best = BuildFolderPathCandidates(existingFolders, new Document(), string.Empty, signals)
+                .FirstOrDefault();
 
             return new DocumentFolderAnalysisResultDto
             {
                 Category = documentType,
                 Confidence = confidence,
                 Reason = reason,
-                SuggestedExistingFolderId = best?.Folder.Id,
-                ExistingFolderCandidates = ranked
-                    .Take(7)
-                    .Select(x => new DocumentFolderCandidateDto
+                SuggestedExistingFolderId = best?.Leaf.Id,
+                ExistingFolderCandidates = best is null
+                    ? new List<DocumentFolderCandidateDto>()
+                    : new List<DocumentFolderCandidateDto>
                     {
-                        FolderId = x.Folder.Id,
-                        FolderKey = x.Folder.Key,
-                        FolderName = x.Folder.Name,
-                        Score = Math.Max(x.Score, 0.60m),
-                        Reason = $"Hierarchical folder match for type '{documentType}' and topic '{topic}'."
-                    })
-                    .ToList(),
+                        new DocumentFolderCandidateDto
+                        {
+                            FolderId = best.Leaf.Id,
+                            FolderKey = best.Leaf.Key,
+                            FolderName = best.Leaf.Name,
+                            Score = Math.Max(best.Score, 0.60m),
+                            Reason = best.Reason
+                        }
+                    },
                 ProposedFolder = BuildDefaultProposal(documentType, topic, existingFolders)
             };
         }
 
-        private static decimal ScoreHierarchicalFolderMatch(
-            DocumentFolder folder,
-            IReadOnlyCollection<DocumentFolder> allFolders,
-            string documentType,
-            string topic)
+        private static bool MatchesSemantic(
+            string[] folderTokens,
+            string key,
+            IEnumerable<string> aliases)
         {
-            decimal score = 0m;
-
-            var names = GetFolderTokens(folder);
-
-            if (MatchesType(names, documentType))
-            {
-                score += 0.70m;
-            }
-
-            if (MatchesTopic(names, topic))
-            {
-                score += 0.55m;
-            }
-
-            var parent = folder.ParentFolderId is null
-                ? null
-                : allFolders.FirstOrDefault(x => x.Id == folder.ParentFolderId);
-
-            if (parent is not null)
-            {
-                var parentNames = GetFolderTokens(parent);
-
-                if (MatchesType(parentNames, documentType))
-                {
-                    score += 0.35m;
-                }
-
-                if (MatchesTopic(parentNames, topic))
-                {
-                    score += 0.30m;
-                }
-
-                // Dla CV/IT preferujemy dziecko IT pod parentem CV.
-                if (documentType == "cv" && topic == "it" &&
-                    MatchesType(parentNames, "cv") &&
-                    MatchesTopic(names, "it"))
-                {
-                    score += 0.60m;
-                }
-
-                // Dla dokumentacji KSeF preferujemy Dokumentacja/KSeF, a nie Faktury.
-                if (documentType == "documentation" && topic == "ksef" &&
-                    MatchesType(parentNames, "documentation") &&
-                    MatchesTopic(names, "ksef"))
-                {
-                    score += 0.60m;
-                }
-            }
-
-            return Math.Min(score, 0.98m);
-        }
-
-        private static decimal HasParentMatchBonus(
-            DocumentFolder folder,
-            IReadOnlyCollection<DocumentFolder> allFolders,
-            string documentType,
-            string topic)
-        {
-            var parent = folder.ParentFolderId is null
-                ? null
-                : allFolders.FirstOrDefault(x => x.Id == folder.ParentFolderId);
-
-            if (parent is null)
-            {
-                return 0m;
-            }
-
-            var parentNames = GetFolderTokens(parent);
-            decimal bonus = 0m;
-
-            if (MatchesType(parentNames, documentType))
-            {
-                bonus += 0.50m;
-            }
-
-            if (MatchesTopic(parentNames, topic))
-            {
-                bonus += 0.30m;
-            }
-
-            return bonus;
-        }
-
-        private static decimal ScoreFolder(
-            DocumentFolder folder,
-            Document document,
-            string source,
-            string documentType,
-            string topic,
-            IReadOnlyCollection<DocumentFolder> allFolders,
-            out string reason)
-        {
-            decimal score = 0m;
-            var reasons = new List<string>();
-
-            var names = GetFolderTokens(folder);
-
-            if (names.Any(x => source.Contains(x)))
-            {
-                score += 0.35m;
-                reasons.Add("document content matches folder name");
-            }
-
-            if (!string.IsNullOrWhiteSpace(document.OriginalFileName) &&
-                names.Any(x => document.OriginalFileName.Contains(x, StringComparison.OrdinalIgnoreCase)))
-            {
-                score += 0.15m;
-                reasons.Add("file name matches folder");
-            }
-
-            if (MatchesType(names, documentType))
-            {
-                score += 0.40m;
-                reasons.Add("folder matches document type");
-            }
-
-            if (MatchesTopic(names, topic))
-            {
-                score += 0.32m;
-                reasons.Add("folder matches document topic");
-            }
-
-            var parent = folder.ParentFolderId is null
-                ? null
-                : allFolders.FirstOrDefault(x => x.Id == folder.ParentFolderId);
-
-            if (parent is not null)
-            {
-                var parentNames = GetFolderTokens(parent);
-
-                if (MatchesType(parentNames, documentType))
-                {
-                    score += 0.20m;
-                    reasons.Add("parent folder matches document type");
-                }
-
-                if (MatchesTopic(parentNames, topic))
-                {
-                    score += 0.18m;
-                    reasons.Add("parent folder matches document topic");
-                }
-
-                if (documentType == "cv" && topic == "it" &&
-                    MatchesType(parentNames, "cv") && MatchesTopic(names, "it"))
-                {
-                    score += 0.45m;
-                    reasons.Add("hierarchy matches CV/IT");
-                }
-
-                if (documentType == "documentation" && topic == "ksef" &&
-                    MatchesType(parentNames, "documentation") && MatchesTopic(names, "ksef"))
-                {
-                    score += 0.45m;
-                    reasons.Add("hierarchy matches Documentation/KSeF");
-                }
-            }
-
-            score = Math.Min(score, 0.98m);
-            reason = reasons.Count == 0
-                ? "Weak semantic match."
-                : string.Join("; ", reasons) + ".";
-
-            return score;
-        }
-
-        private static bool MatchesType(string[] names, string documentType)
-        {
-            if (string.IsNullOrWhiteSpace(documentType) || documentType == "unknown")
+            if (string.IsNullOrWhiteSpace(key) || key is "unknown" or "general")
             {
                 return false;
             }
 
-            if (names.Any(x => x == documentType || x.Contains(documentType)))
+            if (folderTokens.Any(x => x.Equals(key, StringComparison.OrdinalIgnoreCase)))
             {
                 return true;
             }
 
-            return CategoryAliases.TryGetValue(documentType, out var aliases) &&
-                   aliases.Any(alias => names.Any(name => name.Contains(alias)));
+            if (folderTokens.Any(x => x.Contains(key, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            foreach (var alias in aliases)
+            {
+                if (folderTokens.Any(x => x.Contains(alias, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
-        private static bool MatchesTopic(string[] names, string topic)
+        private static int CountMatches(string source, IEnumerable<string> aliases)
         {
-            if (string.IsNullOrWhiteSpace(topic) || topic == "general")
-            {
-                return false;
-            }
+            return aliases
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count(source.Contains);
+        }
 
-            if (names.Any(x => x == topic || x.Contains(topic)))
-            {
-                return true;
-            }
-
-            return TopicAliases.TryGetValue(topic, out var aliases) &&
-                   aliases.Any(alias => names.Any(name => name.Contains(alias)));
+        private static HashSet<string> Tokenize(string source)
+        {
+            return Regex.Split(source.ToLowerInvariant(), @"[^a-zA-Z0-9ąćęłńóśźżА-Яа-яІіЇїЄє]+")
+                .Where(x => x.Length >= 3)
+                .Distinct()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
 
         private static string[] GetFolderTokens(DocumentFolder folder)
@@ -822,9 +974,15 @@ Document excerpt:
                 folder.NameUa
             }
             .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim().ToLowerInvariant())
-            .Distinct()
+            .SelectMany(SplitFolderTokens)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        }
+
+        private static IEnumerable<string> SplitFolderTokens(string value)
+        {
+            return Regex.Split(value.Trim().ToLowerInvariant(), @"[^a-zA-Z0-9ąćęłńóśźżА-Яа-яІіЇїЄє]+")
+                .Where(x => !string.IsNullOrWhiteSpace(x));
         }
 
         private static DocumentFolderProposalDto? BuildDefaultProposal(
@@ -832,37 +990,52 @@ Document excerpt:
             string topic,
             IReadOnlyCollection<DocumentFolder> existingFolders)
         {
-            // CV/IT -> jeśli istnieje parent CV, twórz dziecko IT pod nim
-            if (documentType == "cv" && topic == "it")
+            if (documentType == "cv" && topic != "general")
             {
                 var cvParent = FindBestFolderBySemantic(existingFolders, "cv");
                 if (cvParent is not null)
                 {
+                    var display = topic switch
+                    {
+                        "it" => "IT",
+                        "legal" => "Legal",
+                        "finance" => "Finance",
+                        "hr" => "HR",
+                        "psychology" => "Psychology",
+                        _ => topic
+                    };
+
                     return new DocumentFolderProposalDto
                     {
-                        Key = "it",
-                        Name = "IT",
-                        NamePl = "IT",
-                        NameEn = "IT",
-                        NameUa = "IT",
+                        Key = topic,
+                        Name = display,
+                        NamePl = display,
+                        NameEn = display,
+                        NameUa = display,
                         ParentFolderId = cvParent.Id
                     };
                 }
             }
 
-            // Dokumentacja KSeF -> jeśli istnieje Dokumentacja, twórz dziecko KSeF pod nią
-            if (documentType == "documentation" && topic == "ksef")
+            if (documentType == "documentation" && topic != "general")
             {
                 var documentationParent = FindBestFolderBySemantic(existingFolders, "documentation");
                 if (documentationParent is not null)
                 {
+                    var display = topic switch
+                    {
+                        "ksef" => "KSeF",
+                        "api" => "API",
+                        _ => topic
+                    };
+
                     return new DocumentFolderProposalDto
                     {
-                        Key = "ksef",
-                        Name = "KSeF",
-                        NamePl = "KSeF",
-                        NameEn = "KSeF",
-                        NameUa = "KSeF",
+                        Key = topic,
+                        Name = display,
+                        NamePl = display,
+                        NameEn = display,
+                        NameUa = display,
                         ParentFolderId = documentationParent.Id
                     };
                 }
@@ -993,6 +1166,26 @@ Document excerpt:
             public string? NameEn { get; set; }
             public string? NameUa { get; set; }
             public Guid? ParentFolderId { get; set; }
+        }
+
+        private sealed class DocumentSignals
+        {
+            public string DocumentType { get; init; } = "unknown";
+            public string Topic { get; init; } = "general";
+            public HashSet<string> Tokens { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> TypeAliases { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> TopicAliases { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private sealed class FolderPathCandidate
+        {
+            public DocumentFolder Leaf { get; init; } = default!;
+            public DocumentFolder? Parent { get; init; }
+            public string PathKey { get; init; } = string.Empty;
+            public string PathDisplay { get; init; } = string.Empty;
+            public HashSet<string> Tokens { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+            public decimal Score { get; init; }
+            public string Reason { get; init; } = string.Empty;
         }
     }
 }
