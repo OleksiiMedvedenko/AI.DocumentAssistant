@@ -48,7 +48,6 @@ public sealed class DocumentService : IDocumentService
     public async Task<DocumentDto> UploadAsync(UploadDocumentRequestDto request, CancellationToken cancellationToken)
     {
         var file = request.File;
-
         if (file is null)
         {
             throw new BadRequestException("File is required.");
@@ -84,6 +83,8 @@ public sealed class DocumentService : IDocumentService
         await using var stream = file.OpenReadStream();
         var storagePath = await _fileStorageService.SaveAsync(stream, fileName, cancellationToken);
 
+        var organizationMode = ResolveOrganizationMode(request);
+
         var document = new Document
         {
             Id = Guid.NewGuid(),
@@ -91,12 +92,21 @@ public sealed class DocumentService : IDocumentService
             FolderId = request.FolderId,
             FileName = fileName,
             OriginalFileName = file.FileName,
-            ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+            ContentType = string.IsNullOrWhiteSpace(file.ContentType)
+                ? "application/octet-stream"
+                : file.ContentType,
             SizeInBytes = file.Length,
             StoragePath = storagePath,
             Status = DocumentStatus.Uploaded,
             UploadedAtUtc = DateTime.UtcNow,
-            FolderClassificationStatus = request.FolderId is null && request.SmartOrganize ? "pending" : "manual",
+
+            OrganizationMode = organizationMode,
+            SmartOrganizeRequested = request.SmartOrganize,
+            AllowSystemFolderCreation = request.AllowSystemFolderCreation,
+
+            FolderClassificationStatus = ResolveInitialClassificationStatus(request),
+            FolderClassificationConfidence = request.FolderId is not null ? 1m : null,
+            FolderClassificationReason = ResolveInitialClassificationReason(request),
             WasFolderAutoAssigned = false
         };
 
@@ -125,6 +135,45 @@ public sealed class DocumentService : IDocumentService
                 WasFolderAutoAssigned = x.WasFolderAutoAssigned
             })
             .FirstAsync(cancellationToken);
+    }
+
+    private static DocumentOrganizationMode ResolveOrganizationMode(UploadDocumentRequestDto request)
+    {
+        if (request.FolderId is not null)
+        {
+            return DocumentOrganizationMode.Manual;
+        }
+
+        if (!request.SmartOrganize)
+        {
+            return DocumentOrganizationMode.Disabled;
+        }
+
+        return request.AllowSystemFolderCreation
+            ? DocumentOrganizationMode.AutoAssignOrCreate
+            : DocumentOrganizationMode.AutoAssignExistingOnly;
+    }
+
+    private static string ResolveInitialClassificationStatus(UploadDocumentRequestDto request)
+    {
+        if (request.FolderId is not null)
+        {
+            return "manual";
+        }
+
+        return request.SmartOrganize ? "pending" : "disabled";
+    }
+
+    private static string ResolveInitialClassificationReason(UploadDocumentRequestDto request)
+    {
+        if (request.FolderId is not null)
+        {
+            return "Folder selected by user.";
+        }
+
+        return request.SmartOrganize
+            ? "Document queued for smart organization."
+            : "Smart organization disabled by user.";
     }
 
     public async Task<List<DocumentDto>> GetAllAsync(Guid? folderId, CancellationToken cancellationToken)

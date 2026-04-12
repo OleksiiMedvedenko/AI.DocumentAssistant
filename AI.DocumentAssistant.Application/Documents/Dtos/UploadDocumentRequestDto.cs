@@ -6,7 +6,9 @@ namespace AI.DocumentAssistant.Application.Documents.Dtos
     {
         public IFormFile File { get; set; } = default!;
         public Guid? FolderId { get; set; }
+
         public bool SmartOrganize { get; set; } = true;
+
         public bool AllowSystemFolderCreation { get; set; } = true;
     }
 }

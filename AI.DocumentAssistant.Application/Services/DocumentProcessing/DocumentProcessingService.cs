@@ -15,6 +15,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
     private readonly IDocumentChunkingService _chunkingService;
     private readonly IEmbeddingService _embeddingService;
     private readonly IDocumentFolderClassifier _documentFolderClassifier;
+    private readonly IDocumentFolderDecisionEngine _documentFolderDecisionEngine;
 
     public DocumentProcessingService(
         AppDbContext dbContext,
@@ -22,7 +23,8 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         IEnumerable<IDocumentTextExtractor> textExtractors,
         IDocumentChunkingService chunkingService,
         IEmbeddingService embeddingService,
-        IDocumentFolderClassifier documentFolderClassifier)
+        IDocumentFolderClassifier documentFolderClassifier,
+        IDocumentFolderDecisionEngine documentFolderDecisionEngine)
     {
         _dbContext = dbContext;
         _fileStorageService = fileStorageService;
@@ -30,6 +32,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         _chunkingService = chunkingService;
         _embeddingService = embeddingService;
         _documentFolderClassifier = documentFolderClassifier;
+        _documentFolderDecisionEngine = documentFolderDecisionEngine;
     }
 
     public async Task ProcessAsync(Guid documentId, CancellationToken cancellationToken)
@@ -45,6 +48,9 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
 
         document.Status = DocumentStatus.Processing;
         document.ErrorMessage = null;
+        document.LastProcessingAttemptAtUtc = DateTime.UtcNow;
+        document.ProcessingAttemptCount += 1;
+
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         try
@@ -75,7 +81,6 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             }
 
             var chunks = _chunkingService.Chunk(document.ExtractedText);
-
             if (chunks.Count == 0)
             {
                 throw new InvalidOperationException("Document text was extracted, but no chunks could be created.");
@@ -118,7 +123,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
                 throw new InvalidOperationException("Document processing did not create any chunks.");
             }
 
-            await AutoAssignFolderAsync(document, cancellationToken);
+            await OrganizeDocumentAsync(document, cancellationToken);
 
             document.Status = DocumentStatus.Ready;
             document.ProcessedAtUtc = DateTime.UtcNow;
@@ -131,16 +136,27 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             document.Status = DocumentStatus.Failed;
             document.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 2000)];
             document.ProcessedAtUtc = DateTime.UtcNow;
+
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 
-    private async Task AutoAssignFolderAsync(Document document, CancellationToken cancellationToken)
+    private async Task OrganizeDocumentAsync(Document document, CancellationToken cancellationToken)
     {
         if (document.FolderId is not null)
         {
             document.FolderClassificationStatus = "manual";
-            document.FolderClassificationConfidence ??= 1m;
+            document.FolderClassificationConfidence = 1m;
+            document.FolderClassificationReason = "Folder selected manually during upload.";
+            document.WasFolderAutoAssigned = false;
+            return;
+        }
+
+        if (document.OrganizationMode == DocumentOrganizationMode.Disabled)
+        {
+            document.FolderClassificationStatus = "disabled";
+            document.FolderClassificationConfidence = null;
+            document.FolderClassificationReason = "Smart organization disabled for this document.";
             document.WasFolderAutoAssigned = false;
             return;
         }
@@ -149,61 +165,21 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             .Where(x => x.UserId == document.UserId)
             .ToListAsync(cancellationToken);
 
-        var suggestion = await _documentFolderClassifier.SuggestAsync(document, existingFolders, cancellationToken);
+        var analysis = await _documentFolderClassifier.AnalyzeAsync(
+            document,
+            existingFolders,
+            cancellationToken);
 
-        if (suggestion is null)
-        {
-            document.FolderClassificationStatus = "uncategorized";
-            document.FolderClassificationConfidence = 0m;
-            document.WasFolderAutoAssigned = false;
-            return;
-        }
+        var decision = await _documentFolderDecisionEngine.DecideAsync(
+            document,
+            analysis,
+            existingFolders,
+            cancellationToken);
 
-        document.FolderClassificationConfidence = suggestion.Confidence;
-
-        if (suggestion.ExistingFolderId is Guid existingFolderId && suggestion.Confidence >= 0.70m)
-        {
-            document.FolderId = existingFolderId;
-            document.FolderClassificationStatus = "auto-assigned";
-            document.WasFolderAutoAssigned = true;
-            return;
-        }
-
-        if (suggestion.Confidence >= 0.85m)
-        {
-            var duplicate = await _dbContext.DocumentFolders.FirstOrDefaultAsync(
-                x => x.UserId == document.UserId &&
-                     x.ParentFolderId == null &&
-                     x.Key == suggestion.ProposedKey,
-                cancellationToken);
-
-            if (duplicate is null)
-            {
-                duplicate = new DocumentFolder
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = document.UserId,
-                    ParentFolderId = null,
-                    Key = suggestion.ProposedKey,
-                    Name = suggestion.ProposedName,
-                    NamePl = suggestion.ProposedNamePl,
-                    NameEn = suggestion.ProposedNameEn,
-                    NameUa = suggestion.ProposedNameUa,
-                    IsSystemGenerated = true,
-                    CreatedAtUtc = DateTime.UtcNow
-                };
-
-                _dbContext.DocumentFolders.Add(duplicate);
-                await _dbContext.SaveChangesAsync(cancellationToken);
-            }
-
-            document.FolderId = duplicate.Id;
-            document.FolderClassificationStatus = "auto-created-and-assigned";
-            document.WasFolderAutoAssigned = true;
-            return;
-        }
-
-        document.FolderClassificationStatus = "suggested";
-        document.WasFolderAutoAssigned = false;
+        document.FolderId = decision.FolderId;
+        document.FolderClassificationStatus = decision.Status;
+        document.FolderClassificationConfidence = decision.Confidence;
+        document.FolderClassificationReason = decision.Reason;
+        document.WasFolderAutoAssigned = decision.AutoAssigned;
     }
 }

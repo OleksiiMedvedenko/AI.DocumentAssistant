@@ -141,17 +141,23 @@ public sealed class ChatService : IChatService
             CreatedAtUtc = DateTime.UtcNow
         };
 
-        var recentConversation = session.Messages?
+        var recentUserQuestions = session.Messages?
+            .Where(x => x.Role == ChatRole.User)
             .OrderByDescending(x => x.CreatedAtUtc)
-            .Take(6)
+            .Take(4)
             .OrderBy(x => x.CreatedAtUtc)
-            .Select(x => $"{x.Role}: {x.Content}")
+            .Select(x => x.Content.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToList()
             ?? new List<string>();
 
         await _dbContext.ChatMessages.AddAsync(userMessage, cancellationToken);
 
-        var enrichedContext = BuildPromptContext(context, recentConversation, normalizedMessage);
+        var enrichedContext = BuildPromptContext(
+            context,
+            recentUserQuestions,
+            normalizedMessage,
+            document.ExtractedText!);
 
         var answer = await _openAiService.AnswerQuestionAsync(
             enrichedContext,
@@ -268,17 +274,22 @@ public sealed class ChatService : IChatService
     }
 
     private static string BuildContext(
-        IReadOnlyList<DocumentChunk> chunks,
-        string fallbackText,
-        string question,
-        int maxCharacters)
+     IReadOnlyList<DocumentChunk> chunks,
+     string fallbackText,
+     string question,
+     int maxCharacters)
     {
         if (maxCharacters <= 0)
         {
             maxCharacters = 12_000;
         }
 
-        if (IsBroadQuestion(question))
+        var intent = DetectQuestionIntent(question, fallbackText);
+
+
+        if (intent is QuestionIntent.BroadOverview
+            or QuestionIntent.DocumentType
+            or QuestionIntent.CandidateProfile)
         {
             return TrimToBoundary(fallbackText, maxCharacters);
         }
@@ -303,7 +314,9 @@ public sealed class ChatService : IChatService
         {
             var text = chunkText!;
             var labeledText = $"[chunk]\n{text}";
-            var additionalLength = parts.Count == 0 ? labeledText.Length : separator.Length + labeledText.Length;
+            var additionalLength = parts.Count == 0
+                ? labeledText.Length
+                : separator.Length + labeledText.Length;
 
             if (currentLength + additionalLength > maxCharacters)
             {
@@ -315,44 +328,13 @@ public sealed class ChatService : IChatService
         }
 
         var context = string.Join(separator, parts);
+
         return string.IsNullOrWhiteSpace(context)
             ? TrimToBoundary(fallbackText, maxCharacters)
             : context;
     }
 
-    private static bool IsBroadQuestion(string question)
-    {
-        if (string.IsNullOrWhiteSpace(question))
-        {
-            return false;
-        }
 
-        var q = question.Trim().ToLowerInvariant();
-
-        string[] broadPatterns =
-        [
-            "summarize",
-            "summary",
-            "what is this document about",
-            "what is this about",
-            "main points",
-            "key points",
-            "overall",
-            "in general",
-            "general overview",
-            "o czym jest",
-            "podsumuj",
-            "podsumowanie",
-            "najważniejsze",
-            "ogólnie",
-            "w skrócie",
-            "про що цей документ",
-            "підсумуй",
-            "загалом"
-        ];
-
-        return broadPatterns.Any(q.Contains);
-    }
 
     private static string TrimToBoundary(string value, int maxCharacters)
     {
@@ -393,18 +375,65 @@ public sealed class ChatService : IChatService
     }
 
     private static string BuildPromptContext(
-        string documentContext,
-        IReadOnlyList<string> recentConversation,
-        string currentQuestion)
+    string documentContext,
+    IReadOnlyList<string> recentUserQuestions,
+    string currentQuestion,
+    string fullDocumentText)
     {
         var sb = new StringBuilder();
+        var intent = DetectQuestionIntent(currentQuestion, fullDocumentText);
+        var looksLikeCv = LooksLikeResumeOrCv(fullDocumentText);
 
-        if (recentConversation.Count > 0)
+        sb.AppendLine("INSTRUCTIONS:");
+        sb.AppendLine("- Answer only from the document evidence and the user's question.");
+        sb.AppendLine("- Do not invent facts that are not supported by the document.");
+        sb.AppendLine("- If the document is a CV/resume, explicitly treat it as a candidate profile.");
+        sb.AppendLine("- For document-type questions, first identify what kind of document it is, then explain briefly why.");
+        sb.AppendLine("- For candidate questions, focus on the candidate's experience, skills, technologies, roles, projects, and education only if supported by the document.");
+        sb.AppendLine("- If the answer is uncertain, say so clearly.");
+        sb.AppendLine();
+
+        sb.AppendLine("DOCUMENT ANALYSIS HINTS:");
+
+        if (looksLikeCv)
         {
-            sb.AppendLine("RECENT CONVERSATION:");
-            foreach (var message in recentConversation)
+            sb.AppendLine("- The document strongly resembles a CV/resume.");
+            sb.AppendLine("- Prefer interpreting role names, technologies, project descriptions, employment periods, education, and skills as parts of a candidate profile.");
+        }
+        else
+        {
+            sb.AppendLine("- The document is not confidently recognized as a CV/resume.");
+        }
+
+        switch (intent)
+        {
+            case QuestionIntent.DocumentType:
+                sb.AppendLine("- The user is asking what kind of document this is.");
+                sb.AppendLine("- Start by identifying the document type, e.g. CV/resume, invoice, contract, report, specification, etc.");
+                break;
+
+            case QuestionIntent.CandidateProfile:
+                sb.AppendLine("- The user is asking about the candidate/person described in the document.");
+                sb.AppendLine("- Summarize the person, role, seniority, skills, technologies, domains, and relevant experience.");
+                break;
+
+            case QuestionIntent.BroadOverview:
+                sb.AppendLine("- The user is asking for a general overview or summary.");
+                break;
+
+            default:
+                sb.AppendLine("- The user is asking a specific question.");
+                break;
+        }
+
+        sb.AppendLine();
+
+        if (recentUserQuestions.Count > 0)
+        {
+            sb.AppendLine("RECENT USER QUESTIONS:");
+            foreach (var question in recentUserQuestions)
             {
-                sb.AppendLine(message);
+                sb.AppendLine($"- {question}");
             }
 
             sb.AppendLine();
@@ -413,9 +442,381 @@ public sealed class ChatService : IChatService
         sb.AppendLine("CURRENT QUESTION:");
         sb.AppendLine(currentQuestion);
         sb.AppendLine();
+
         sb.AppendLine("DOCUMENT EVIDENCE:");
         sb.AppendLine(documentContext);
 
         return sb.ToString().Trim();
     }
+
+    private enum QuestionIntent
+    {
+        Specific = 0,
+        BroadOverview = 1,
+        DocumentType = 2,
+        CandidateProfile = 3
+    }
+
+    private static QuestionIntent DetectQuestionIntent(string question, string fullDocumentText)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+        {
+            return QuestionIntent.Specific;
+        }
+
+        var normalized = NormalizeForIntentDetection(question);
+
+        if (ContainsAnyPhrase(normalized, DocumentTypePhrases))
+        {
+            return QuestionIntent.DocumentType;
+        }
+
+        if (ContainsAnyPhrase(normalized, CandidateProfilePhrases))
+        {
+            return QuestionIntent.CandidateProfile;
+        }
+
+        if (ContainsAnyPhrase(normalized, BroadOverviewPhrases))
+        {
+            return QuestionIntent.BroadOverview;
+        }
+
+        // Dodatkowa heurystyka:
+        // jeżeli dokument wygląda jak CV, a pytanie brzmi jak pytanie o osobę,
+        // traktujemy to jako CandidateProfile.
+        if (LooksLikeResumeOrCv(fullDocumentText) && LooksLikePersonQuestion(normalized))
+        {
+            return QuestionIntent.CandidateProfile;
+        }
+
+        return QuestionIntent.Specific;
+    }
+
+    private static bool LooksLikePersonQuestion(string normalizedQuestion)
+    {
+        return ContainsAnyPhrase(normalizedQuestion, new[]
+        {
+        "who is the candidate",
+        "who is this candidate",
+        "tell me about the candidate",
+        "describe the candidate",
+        "who is this person",
+        "tell me about this person",
+        "describe this person",
+
+        "kim jest kandydat",
+        "kim jest ten kandydat",
+        "opisz kandydata",
+        "powiedz o kandydacie",
+        "kim jest ta osoba",
+        "opisz te osobe",
+
+        "хто такий кандидат",
+        "хто цей кандидат",
+        "опиши кандидата",
+        "розкажи про кандидата",
+        "хто ця людина",
+
+        "кто такой кандидат",
+        "кто этот кандидат",
+        "опиши кандидата",
+        "расскажи о кандидате",
+        "кто этот человек",
+
+        "wer ist der kandidat",
+        "beschreibe den kandidaten",
+        "wer ist diese person",
+
+        "qui est le candidat",
+        "decris le candidat",
+        "parle moi du candidat",
+
+        "quien es el candidato",
+        "describe al candidato",
+        "hablame del candidato",
+
+        "chi e il candidato",
+        "descrivi il candidato",
+        "parlami del candidato",
+
+        "quem e o candidato",
+        "descreva o candidato",
+        "fale sobre o candidato"
+    });
+    }
+
+    private static bool LooksLikeResumeOrCv(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeForIntentDetection(text);
+
+        var score = 0;
+
+        score += CountMatches(normalized, new[]
+        {
+        "curriculum vitae",
+        "resume",
+        "cv",
+        "work experience",
+        "professional experience",
+        "employment history",
+        "experience",
+        "education",
+        "skills",
+        "technical skills",
+        "projects",
+        "certifications",
+        "summary",
+        "profile",
+        "linkedin",
+
+        "doswiadczenie zawodowe",
+        "doswiadczenie",
+        "wyksztalcenie",
+        "umiejetnosci",
+        "technologie",
+        "projekty",
+        "certyfikaty",
+        "profil",
+        "podsumowanie",
+
+        "досвід роботи",
+        "досвід",
+        "освіта",
+        "навички",
+        "технології",
+        "проєкти",
+        "проекти",
+        "сертифікати",
+        "профіль",
+
+        "опыт работы",
+        "опыт",
+        "образование",
+        "навыки",
+        "технологии",
+        "проекты",
+        "сертификаты",
+        "профиль",
+
+        "berufserfahrung",
+        "ausbildung",
+        "kenntnisse",
+        "fahigkeiten",
+        "projekte",
+        "profil",
+
+        "experience professionnelle",
+        "formation",
+        "competences",
+        "projets",
+        "profil",
+
+        "experiencia laboral",
+        "educacion",
+        "habilidades",
+        "competencias",
+        "proyectos",
+        "perfil",
+
+        "esperienza lavorativa",
+        "istruzione",
+        "competenze",
+        "progetti",
+        "profilo",
+
+        "experiencia profissional",
+        "formacao",
+        "habilidades",
+        "competencias",
+        "projetos",
+        "perfil"
+    });
+
+        score += CountMatches(normalized, new[]
+        {
+        "asp.net",
+        ".net",
+        "c#",
+        "react",
+        "flutter",
+        "sql",
+        "rest api",
+        "backend",
+        "frontend",
+        "full stack",
+        "fullstack",
+        "developer",
+        "engineer",
+        "software engineer"
+    });
+
+        return score >= 4;
+    }
+
+    private static int CountMatches(string normalizedText, IEnumerable<string> phrases)
+    {
+        var count = 0;
+
+        foreach (var phrase in phrases)
+        {
+            if (normalizedText.Contains(phrase, StringComparison.Ordinal))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static bool ContainsAnyPhrase(string normalizedText, IEnumerable<string> phrases)
+    {
+        foreach (var phrase in phrases)
+        {
+            if (normalizedText.Contains(phrase, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeForIntentDetection(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value
+            .Trim()
+            .ToLowerInvariant()
+            .Normalize(System.Text.NormalizationForm.FormD);
+
+        var sb = new StringBuilder(normalized.Length);
+
+        foreach (var ch in normalized)
+        {
+            var unicodeCategory = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+
+            if (unicodeCategory == System.Globalization.UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            if (char.IsLetterOrDigit(ch) || char.IsWhiteSpace(ch))
+            {
+                sb.Append(ch);
+            }
+            else
+            {
+                sb.Append(' ');
+            }
+        }
+
+        var cleaned = sb.ToString();
+
+        while (cleaned.Contains("  ", StringComparison.Ordinal))
+        {
+            cleaned = cleaned.Replace("  ", " ", StringComparison.Ordinal);
+        }
+
+        return cleaned.Trim();
+    }
+
+    private static readonly string[] BroadOverviewPhrases =
+    [
+        "summarize",
+    "summary",
+    "main points",
+    "key points",
+    "overall",
+    "in general",
+    "general overview",
+    "what is this about",
+    "what is this document about",
+    "give me an overview",
+    "brief overview",
+
+    "podsumuj",
+    "podsumowanie",
+    "najwazniejsze",
+    "glowne punkty",
+    "kluczowe punkty",
+    "ogolnie",
+    "w skrocie",
+    "o czym jest",
+    "daj przeglad",
+    "krotkie podsumowanie",
+
+    "підсумуй",
+    "підсумок",
+    "загалом",
+    "коротко",
+    "про що цей документ",
+    "огляд",
+    "основні моменти",
+    ];
+
+    private static readonly string[] DocumentTypePhrases =
+    [
+        "what is this document",
+    "what kind of document is this",
+    "what type of document is this",
+    "identify this document",
+    "is this a cv",
+    "is this resume",
+    "is this a resume",
+    "is this curriculum vitae",
+    "what document is this",
+
+    "co to jest za dokument",
+    "jaki to dokument",
+    "jakiego typu to dokument",
+    "okresl typ dokumentu",
+    "czy to jest cv",
+    "czy to cv",
+    "czy to zyciorys",
+    "czy to resume",
+
+    "що це за документ",
+    "який це документ",
+    "який тип документа",
+    "визнач тип документа",
+    "чи це cv",
+    "чи це резюме",
+    ];
+
+    private static readonly string[] CandidateProfilePhrases =
+    [
+        "tell me about the candidate",
+    "describe the candidate",
+    "who is the candidate",
+    "who is this candidate",
+    "what is the candidate",
+    "what does the candidate do",
+    "candidate profile",
+    "about the candidate",
+
+    "powiedz o kandydacie",
+    "opisz kandydata",
+    "kim jest kandydat",
+    "kim jest ten kandydat",
+    "co to za kandydat",
+    "czym zajmuje sie kandydat",
+    "profil kandydata",
+    "o kandydacie",
+
+    "розкажи про кандидата",
+    "опиши кандидата",
+    "хто такий кандидат",
+    "хто цей кандидат",
+    "чим займається кандидат",
+    "профіль кандидата",
+    ];
 }
