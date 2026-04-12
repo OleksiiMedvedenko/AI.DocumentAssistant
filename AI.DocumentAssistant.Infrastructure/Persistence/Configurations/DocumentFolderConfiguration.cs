@@ -29,6 +29,16 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Configurations
                 .WithMany(x => x.Children)
                 .HasForeignKey(x => x.ParentFolderId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            builder.HasMany(x => x.Documents)
+                .WithOne(x => x.Folder)
+                .HasForeignKey(x => x.FolderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            builder.HasMany(x => x.ChatSessions)
+                .WithOne(x => x.Folder)
+                .HasForeignKey(x => x.FolderId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 }

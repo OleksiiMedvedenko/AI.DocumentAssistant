@@ -158,10 +158,22 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                 throw new BadRequestException("Cannot delete a folder that still contains subfolders.");
             }
 
-            var hasDocuments = await _dbContext.Documents.AnyAsync(x => x.FolderId == folder.Id, cancellationToken);
+            var hasDocuments = await _dbContext.Documents
+                .AnyAsync(x => x.UserId == userId && x.FolderId == folder.Id, cancellationToken);
+
             if (hasDocuments)
             {
                 throw new BadRequestException("Cannot delete a folder that still contains documents.");
+            }
+
+            var folderChatSessions = await _dbContext.ChatSessions
+                .Where(x => x.UserId == userId && x.FolderId == folder.Id)
+                .ToListAsync(cancellationToken);
+
+            foreach (var session in folderChatSessions)
+            {
+                session.FolderId = null;
+                session.Folder = null;
             }
 
             _dbContext.DocumentFolders.Remove(folder);
