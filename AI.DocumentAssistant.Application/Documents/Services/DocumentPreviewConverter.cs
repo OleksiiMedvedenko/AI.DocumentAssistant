@@ -8,7 +8,7 @@ using System.Xml.Linq;
 
 namespace AI.DocumentAssistant.Application.Documents.Services
 {
-    public sealed class LibreOfficeDocumentPreviewConverter : IDocumentPreviewConverter
+    public sealed class DocumentPreviewConverter : IDocumentPreviewConverter
     {
         private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
