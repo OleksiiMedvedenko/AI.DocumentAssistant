@@ -2,6 +2,7 @@
 using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Documents.Dtos;
 using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Domain.Enums;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -270,9 +271,13 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                     .Select(x =>
                         $"- id: {x.Id}, parentId: {x.ParentFolderId}, key: {x.Key}, names: [{x.NamePl} | {x.NameEn} | {x.NameUa} | {x.Name}]"));
 
-            var sampleText = document.ExtractedText is null
+            var maxExcerpt = document.ProcessingProfile == DocumentProcessingProfile.HighAccuracyCv
+                ? 5000
+                : 2500;
+
+            var sampleText = string.IsNullOrWhiteSpace(document.ExtractedText)
                 ? string.Empty
-                : document.ExtractedText[..Math.Min(document.ExtractedText.Length, 2800)];
+                : DocumentAnalysisPreviewBuilder.Build(document.ExtractedText, maxExcerpt);
 
             var prompt = $$"""
 You analyze a document and recommend how it should be organized in a hierarchical folder tree.
@@ -402,12 +407,18 @@ Document excerpt:
         private static string BuildSource(Document document)
         {
             var builder = new StringBuilder();
+
             builder.AppendLine(document.OriginalFileName);
             builder.AppendLine(document.ContentType);
 
-            if (!string.IsNullOrWhiteSpace(document.ExtractedText))
+            var previewLimit = document.ProcessingProfile == DocumentProcessingProfile.HighAccuracyCv
+                ? 5500
+                : 3000;
+
+            var preview = DocumentAnalysisPreviewBuilder.Build(document.ExtractedText, previewLimit);
+            if (!string.IsNullOrWhiteSpace(preview))
             {
-                builder.AppendLine(document.ExtractedText[..Math.Min(document.ExtractedText.Length, 8000)]);
+                builder.AppendLine(preview);
             }
 
             return builder.ToString().ToLowerInvariant();

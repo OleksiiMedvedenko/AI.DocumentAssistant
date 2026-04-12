@@ -243,7 +243,7 @@ public sealed class ChatService : IChatService
             .Select(x => new ChatSessionDto
             {
                 Id = x.Id,
-                DocumentId = x.DocumentId,
+                DocumentId = (Guid)x.DocumentId,
                 CreatedAtUtc = x.CreatedAtUtc,
                 LastMessageAtUtc = x.Messages
                     .OrderByDescending(m => m.CreatedAtUtc)
@@ -274,10 +274,10 @@ public sealed class ChatService : IChatService
     }
 
     private static string BuildContext(
-     IReadOnlyList<DocumentChunk> chunks,
-     string fallbackText,
-     string question,
-     int maxCharacters)
+        IReadOnlyList<DocumentChunk> chunks,
+        string fallbackText,
+        string question,
+        int maxCharacters)
     {
         if (maxCharacters <= 0)
         {
@@ -286,12 +286,11 @@ public sealed class ChatService : IChatService
 
         var intent = DetectQuestionIntent(question, fallbackText);
 
-
         if (intent is QuestionIntent.BroadOverview
             or QuestionIntent.DocumentType
             or QuestionIntent.CandidateProfile)
         {
-            return TrimToBoundary(fallbackText, maxCharacters);
+            return BuildOverviewContext(chunks, fallbackText, maxCharacters);
         }
 
         var selectedChunkTexts = chunks
@@ -303,7 +302,7 @@ public sealed class ChatService : IChatService
 
         if (selectedChunkTexts.Count == 0)
         {
-            return TrimToBoundary(fallbackText, maxCharacters);
+            return TrimToBoundary(fallbackText, Math.Min(maxCharacters, 4000));
         }
 
         const string separator = "\n\n---\n\n";
@@ -312,26 +311,45 @@ public sealed class ChatService : IChatService
 
         foreach (var chunkText in selectedChunkTexts)
         {
-            var text = chunkText!;
-            var labeledText = $"[chunk]\n{text}";
-            var additionalLength = parts.Count == 0
-                ? labeledText.Length
-                : separator.Length + labeledText.Length;
+            var block = $"[chunk]\n{chunkText}";
+            var nextLength = parts.Count == 0
+                ? block.Length
+                : separator.Length + block.Length;
 
-            if (currentLength + additionalLength > maxCharacters)
+            if (currentLength + nextLength > maxCharacters)
             {
                 break;
             }
 
-            parts.Add(labeledText);
-            currentLength += additionalLength;
+            parts.Add(block);
+            currentLength += nextLength;
         }
 
-        var context = string.Join(separator, parts);
+        return parts.Count > 0
+            ? string.Join(separator, parts)
+            : TrimToBoundary(fallbackText, Math.Min(maxCharacters, 4000));
+    }
 
-        return string.IsNullOrWhiteSpace(context)
-            ? TrimToBoundary(fallbackText, maxCharacters)
-            : context;
+    private static string BuildOverviewContext(
+        IReadOnlyList<DocumentChunk> chunks,
+        string fallbackText,
+        int maxCharacters)
+    {
+        var selected = chunks
+            .OrderBy(x => x.ChunkIndex)
+            .Select(x => x.Text?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Take(8)
+            .ToList();
+
+        if (selected.Count == 0)
+        {
+            return TrimToBoundary(fallbackText, Math.Min(maxCharacters, 4000));
+        }
+
+        const string separator = "\n\n---\n\n";
+        var content = string.Join(separator, selected.Select(x => $"[overview-chunk]\n{x}"));
+        return TrimToBoundary(content, maxCharacters);
     }
 
 

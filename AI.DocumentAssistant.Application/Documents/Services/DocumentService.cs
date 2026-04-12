@@ -85,6 +85,8 @@ public sealed class DocumentService : IDocumentService
 
         var organizationMode = ResolveOrganizationMode(request);
 
+        var processingProfile = DocumentProcessingProfileResolver.Resolve(file.FileName, file.ContentType);
+
         var document = new Document
         {
             Id = Guid.NewGuid(),
@@ -107,7 +109,11 @@ public sealed class DocumentService : IDocumentService
             FolderClassificationStatus = ResolveInitialClassificationStatus(request),
             FolderClassificationConfidence = request.FolderId is not null ? 1m : null,
             FolderClassificationReason = ResolveInitialClassificationReason(request),
-            WasFolderAutoAssigned = false
+            WasFolderAutoAssigned = false,
+            ProcessingProfile = processingProfile,
+            IsNew = true,
+            AnalyzedAtUtc = null,
+            QuickSummary = null,
         };
 
         _dbContext.Documents.Add(document);
@@ -132,9 +138,40 @@ public sealed class DocumentService : IDocumentService
                 FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                 FolderClassificationStatus = x.FolderClassificationStatus,
                 FolderClassificationConfidence = x.FolderClassificationConfidence,
-                WasFolderAutoAssigned = x.WasFolderAutoAssigned
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned,
+                IsNew = x.IsNew,
+                ProcessingProfile = x.ProcessingProfile,
             })
             .FirstAsync(cancellationToken);
+    }
+
+    public async Task<UploadDocumentsResultDto> UploadManyAsync(
+    UploadDocumentsRequestDto request,
+    CancellationToken cancellationToken)
+    {
+        if (request.Files is null || request.Files.Count == 0)
+        {
+            throw new BadRequestException("At least one file is required.");
+        }
+
+        var result = new UploadDocumentsResultDto();
+
+        foreach (var file in request.Files.Where(static x => x is not null))
+        {
+            var singleResult = await UploadAsync(
+                new UploadDocumentRequestDto
+                {
+                    File = file,
+                    FolderId = request.FolderId,
+                    SmartOrganize = request.SmartOrganize,
+                    AllowSystemFolderCreation = request.AllowSystemFolderCreation
+                },
+                cancellationToken);
+
+            result.Documents.Add(singleResult);
+        }
+
+        return result;
     }
 
     private static DocumentOrganizationMode ResolveOrganizationMode(UploadDocumentRequestDto request)

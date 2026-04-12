@@ -34,6 +34,25 @@ public sealed class DocumentsController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("batch-upload")]
+    [RequestSizeLimit(250_000_000)]
+    public async Task<ActionResult<UploadDocumentsResultDto>> BatchUpload(
+        [FromForm] UploadDocumentsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _documentService.UploadManyAsync(
+            new UploadDocumentsRequestDto
+            {
+                Files = request.Files,
+                FolderId = request.FolderId,
+                SmartOrganize = request.SmartOrganize,
+                AllowSystemFolderCreation = request.AllowSystemFolderCreation
+            },
+            cancellationToken);
+
+        return Ok(result);
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] Guid? folderId, CancellationToken cancellationToken)
     {

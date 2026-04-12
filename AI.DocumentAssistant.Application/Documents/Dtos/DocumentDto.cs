@@ -20,5 +20,8 @@ namespace AI.DocumentAssistant.Application.Documents.Dtos
         public string? FolderClassificationStatus { get; set; }
         public decimal? FolderClassificationConfidence { get; set; }
         public bool WasFolderAutoAssigned { get; set; }
+
+        public bool IsNew { get; set; }
+        public DocumentProcessingProfile ProcessingProfile { get; set; }
     }
 }
