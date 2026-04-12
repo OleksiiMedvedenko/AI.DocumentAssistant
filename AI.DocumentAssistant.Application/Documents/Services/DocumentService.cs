@@ -4,11 +4,13 @@ using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Application.Documents.Dtos;
+using AI.DocumentAssistant.Application.Services.Authentication;
 using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
 
 namespace AI.DocumentAssistant.Application.Documents.Services;
 
@@ -26,6 +28,7 @@ public sealed class DocumentService : IDocumentService
     private readonly IOpenAiService _openAiService;
     private readonly IUsageQuotaService _usageQuotaService;
     private readonly IUsageTrackingService _usageTrackingService;
+    private readonly IDocumentPreviewConverter _documentPreviewConverter;
 
     public DocumentService(
         AppDbContext dbContext,
@@ -34,7 +37,8 @@ public sealed class DocumentService : IDocumentService
         IDocumentProcessingQueue documentProcessingQueue,
         IOpenAiService openAiService,
         IUsageQuotaService usageQuotaService,
-        IUsageTrackingService usageTrackingService)
+        IUsageTrackingService usageTrackingService,
+        IDocumentPreviewConverter documentPreviewConverter)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
@@ -43,6 +47,7 @@ public sealed class DocumentService : IDocumentService
         _openAiService = openAiService;
         _usageQuotaService = usageQuotaService;
         _usageTrackingService = usageTrackingService;
+        _documentPreviewConverter = documentPreviewConverter;
     }
 
     public async Task<DocumentDto> UploadAsync(UploadDocumentRequestDto request, CancellationToken cancellationToken)
@@ -629,5 +634,145 @@ public sealed class DocumentService : IDocumentService
         {
             throw new BadRequestException("Document is not ready yet.");
         }
+    }
+
+    public async Task<DocumentPreviewMetaDto> GetPreviewMetaAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new
+            {
+                x.Id,
+                x.OriginalFileName,
+                x.ContentType
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var extension = Path.GetExtension(document.OriginalFileName).ToLowerInvariant();
+
+        if (string.Equals(document.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase) || extension == ".pdf")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = document.ContentType,
+                PreviewKind = "pdf",
+                CanInlinePreview = true
+            };
+        }
+
+        if (extension == ".docx")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = "text/html",
+                PreviewKind = "html",
+                CanInlinePreview = true,
+                Message = "Preview is generated as HTML from the DOCX structure."
+            };
+        }
+
+        if (extension == ".doc")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = document.ContentType,
+                PreviewKind = "download",
+                CanInlinePreview = false,
+                Message = "Legacy DOC files cannot be previewed inline without an external converter."
+            };
+        }
+
+        if (extension is ".txt" or ".md" or ".json" or ".xml" or ".csv" or ".log")
+        {
+            return new DocumentPreviewMetaDto
+            {
+                DocumentId = document.Id,
+                FileName = document.OriginalFileName,
+                ContentType = "text/plain",
+                PreviewKind = "text",
+                CanInlinePreview = true
+            };
+        }
+
+        return new DocumentPreviewMetaDto
+        {
+            DocumentId = document.Id,
+            FileName = document.OriginalFileName,
+            ContentType = document.ContentType,
+            PreviewKind = "download",
+            CanInlinePreview = false,
+            Message = "Inline preview is not available for this file type."
+        };
+    }
+
+    public async Task<(Stream Stream, string ContentType, string FileName)> OpenOriginalFileAsync(
+    Guid documentId,
+    CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new
+            {
+                x.StoragePath,
+                x.ContentType,
+                x.OriginalFileName
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var stream = File.OpenRead(document.StoragePath);
+
+        return (
+            stream,
+            string.IsNullOrWhiteSpace(document.ContentType) ? "application/octet-stream" : document.ContentType,
+            document.OriginalFileName
+        );
+    }
+
+    public async Task<(Stream Stream, string ContentType, string FileName)> OpenPreviewFileAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Select(x => new
+            {
+                x.StoragePath,
+                x.ContentType,
+                x.OriginalFileName
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        return await _documentPreviewConverter.ConvertToPreviewAsync(
+            document.StoragePath,
+            document.OriginalFileName,
+            document.ContentType,
+            cancellationToken);
     }
 }

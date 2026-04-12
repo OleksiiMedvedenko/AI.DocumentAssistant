@@ -33,6 +33,8 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IDocumentFolderDecisionEngine, DocumentFolderDecisionEngine>();
 
+        services.AddScoped<IDocumentPreviewConverter, LibreOfficeDocumentPreviewConverter>();
+
         return services;
     }
 }

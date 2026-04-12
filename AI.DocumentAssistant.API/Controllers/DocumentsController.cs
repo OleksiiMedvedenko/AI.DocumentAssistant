@@ -147,4 +147,33 @@ public sealed class DocumentsController : ControllerBase
 
         return Ok(result);
     }
+
+    [HttpGet("{id:guid}/preview-meta")]
+    public async Task<IActionResult> GetPreviewMeta(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.GetPreviewMetaAsync(id, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("{id:guid}/content")]
+    public async Task<IActionResult> GetContent(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.OpenOriginalFileAsync(id, cancellationToken);
+
+        return File(
+            result.Stream,
+            result.ContentType,
+            enableRangeProcessing: true);
+    }
+
+    [HttpGet("{id:guid}/preview-file")]
+    public async Task<IActionResult> GetPreviewFile(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.OpenPreviewFileAsync(id, cancellationToken);
+
+        return File(
+            result.Stream,
+            result.ContentType,
+            enableRangeProcessing: true);
+    }
 }

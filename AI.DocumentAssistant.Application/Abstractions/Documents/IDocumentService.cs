@@ -20,4 +20,14 @@ public interface IDocumentService
     Task<List<ExtractedDataDto>> GetExtractionsAsync(Guid documentId, CancellationToken cancellationToken);
     Task<ExtractedDataDto> GetExtractionByIdAsync(Guid documentId, Guid extractionId, CancellationToken cancellationToken);
     Task<CompareDocumentsResultDto> CompareAsync(Guid firstDocumentId, CompareDocumentsRequestDto request, CancellationToken cancellationToken);
+
+    Task<DocumentPreviewMetaDto> GetPreviewMetaAsync(Guid documentId, CancellationToken cancellationToken);
+
+    Task<(Stream Stream, string ContentType, string FileName)> OpenOriginalFileAsync(
+        Guid documentId,
+        CancellationToken cancellationToken);
+
+    Task<(Stream Stream, string ContentType, string FileName)> OpenPreviewFileAsync(
+        Guid documentId,
+        CancellationToken cancellationToken);
 }
