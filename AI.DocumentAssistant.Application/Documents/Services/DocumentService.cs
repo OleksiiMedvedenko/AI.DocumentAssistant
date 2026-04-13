@@ -83,71 +83,102 @@ public sealed class DocumentService : IDocumentService
             }
         }
 
+        await _usageQuotaService.EnsureWithinQuotaAsync(
+            userId,
+            UsageType.UploadDocument,
+            1,
+            cancellationToken);
+
         var fileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
+        string? storagePath = null;
 
-        await using var stream = file.OpenReadStream();
-        var storagePath = await _fileStorageService.SaveAsync(stream, fileName, cancellationToken);
-
-        var organizationMode = ResolveOrganizationMode(request);
-
-        var processingProfile = DocumentProcessingProfileResolver.Resolve(file.FileName, file.ContentType);
-
-        var document = new Document
+        try
         {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            FolderId = request.FolderId,
-            FileName = fileName,
-            OriginalFileName = file.FileName,
-            ContentType = string.IsNullOrWhiteSpace(file.ContentType)
-                ? "application/octet-stream"
-                : file.ContentType,
-            SizeInBytes = file.Length,
-            StoragePath = storagePath,
-            Status = DocumentStatus.Uploaded,
-            UploadedAtUtc = DateTime.UtcNow,
+            await using var stream = file.OpenReadStream();
+            storagePath = await _fileStorageService.SaveAsync(stream, fileName, cancellationToken);
 
-            OrganizationMode = organizationMode,
-            SmartOrganizeRequested = request.SmartOrganize,
-            AllowSystemFolderCreation = request.AllowSystemFolderCreation,
+            var organizationMode = ResolveOrganizationMode(request);
+            var processingProfile = DocumentProcessingProfileResolver.Resolve(file.FileName, file.ContentType);
 
-            FolderClassificationStatus = ResolveInitialClassificationStatus(request),
-            FolderClassificationConfidence = request.FolderId is not null ? 1m : null,
-            FolderClassificationReason = ResolveInitialClassificationReason(request),
-            WasFolderAutoAssigned = false,
-            ProcessingProfile = processingProfile,
-            IsNew = true,
-            AnalyzedAtUtc = null,
-            QuickSummary = null,
-        };
-
-        _dbContext.Documents.Add(document);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        await _documentProcessingQueue.EnqueueAsync(document.Id, cancellationToken);
-
-        return await _dbContext.Documents
-            .Where(x => x.Id == document.Id)
-            .Select(x => new DocumentDto
+            var document = new Document
             {
-                Id = x.Id,
-                OriginalFileName = x.OriginalFileName,
-                ContentType = x.ContentType,
-                SizeInBytes = x.SizeInBytes,
-                Status = x.Status,
-                UploadedAtUtc = x.UploadedAtUtc,
-                FolderId = x.FolderId,
-                FolderName = x.Folder != null ? x.Folder.Name : null,
-                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
-                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
-                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
-                FolderClassificationStatus = x.FolderClassificationStatus,
-                FolderClassificationConfidence = x.FolderClassificationConfidence,
-                WasFolderAutoAssigned = x.WasFolderAutoAssigned,
-                IsNew = x.IsNew,
-                ProcessingProfile = x.ProcessingProfile,
-            })
-            .FirstAsync(cancellationToken);
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                FolderId = request.FolderId,
+                FileName = fileName,
+                OriginalFileName = file.FileName,
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType)
+                    ? "application/octet-stream"
+                    : file.ContentType,
+                SizeInBytes = file.Length,
+                StoragePath = storagePath,
+                Status = DocumentStatus.Uploaded,
+                UploadedAtUtc = DateTime.UtcNow,
+
+                OrganizationMode = organizationMode,
+                SmartOrganizeRequested = request.SmartOrganize,
+                AllowSystemFolderCreation = request.AllowSystemFolderCreation,
+
+                FolderClassificationStatus = ResolveInitialClassificationStatus(request),
+                FolderClassificationConfidence = request.FolderId is not null ? 1m : null,
+                FolderClassificationReason = ResolveInitialClassificationReason(request),
+                WasFolderAutoAssigned = false,
+                ProcessingProfile = processingProfile,
+                IsNew = true,
+                AnalyzedAtUtc = null,
+                QuickSummary = null,
+            };
+
+            _dbContext.Documents.Add(document);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            await _usageTrackingService.TrackAsync(
+                userId,
+                UsageType.UploadDocument,
+                1,
+                cancellationToken,
+                referenceId: document.Id.ToString());
+
+            await _documentProcessingQueue.EnqueueAsync(document.Id, cancellationToken);
+
+            return await _dbContext.Documents
+                .Where(x => x.Id == document.Id)
+                .Select(x => new DocumentDto
+                {
+                    Id = x.Id,
+                    OriginalFileName = x.OriginalFileName,
+                    ContentType = x.ContentType,
+                    SizeInBytes = x.SizeInBytes,
+                    Status = x.Status,
+                    UploadedAtUtc = x.UploadedAtUtc,
+                    FolderId = x.FolderId,
+                    FolderName = x.Folder != null ? x.Folder.Name : null,
+                    FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                    FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                    FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                    FolderClassificationStatus = x.FolderClassificationStatus,
+                    FolderClassificationConfidence = x.FolderClassificationConfidence,
+                    WasFolderAutoAssigned = x.WasFolderAutoAssigned,
+                    IsNew = x.IsNew,
+                    ProcessingProfile = x.ProcessingProfile,
+                })
+                .FirstAsync(cancellationToken);
+        }
+        catch
+        {
+            if (!string.IsNullOrWhiteSpace(storagePath))
+            {
+                try
+                {
+                    await _fileStorageService.DeleteAsync(storagePath, cancellationToken);
+                }
+                catch
+                {
+                }
+            }
+
+            throw;
+        }
     }
 
     public async Task<UploadDocumentsResultDto> UploadManyAsync(
