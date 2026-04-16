@@ -2,10 +2,13 @@
 using AI.DocumentAssistant.Application.Abstractions.Authentication;
 using AI.DocumentAssistant.Application.Abstractions.Chats;
 using AI.DocumentAssistant.Application.Abstractions.Common;
+using AI.DocumentAssistant.Application.Abstractions.Communication;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
+using AI.DocumentAssistant.Application.Auth.Models;
 using AI.DocumentAssistant.Application.Chats.Services;
 using AI.DocumentAssistant.Application.Services.AI;
 using AI.DocumentAssistant.Application.Services.Authentication;
+using AI.DocumentAssistant.Application.Services.Communication;
 using AI.DocumentAssistant.Application.Services.DocumentProcessing;
 using AI.DocumentAssistant.Application.Services.Storage;
 using AI.DocumentAssistant.Application.Services.Time;
@@ -26,6 +29,9 @@ public static class InfrastructureServiceRegistration
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.Configure<LocalStorageOptions>(configuration.GetSection(LocalStorageOptions.SectionName));
         services.Configure<OpenAiOptions>(configuration.GetSection(OpenAiOptions.SectionName));
+        services.Configure<SmtpOptions>(configuration.GetSection(SmtpOptions.SectionName));
+        services.Configure<EmailConfirmationOptions>(
+            configuration.GetSection(EmailConfirmationOptions.SectionName));
 
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
@@ -48,6 +54,9 @@ public static class InfrastructureServiceRegistration
         services.AddScoped<IDocumentTextExtractor, PlainTextDocumentTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, CsvDocumentTextExtractor>();
         services.AddScoped<IDocumentTextExtractor, DocxDocumentTextExtractor>();
+
+        services.AddScoped<IAccountEmailTemplateService, AccountEmailTemplateService>();
+        services.AddScoped<IEmailSender, SmtpEmailSender>();
 
         services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
         services.AddHostedService<QueuedDocumentProcessingBackgroundService>();

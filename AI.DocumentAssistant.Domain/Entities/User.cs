@@ -10,6 +10,11 @@ public sealed class User
     public string? DisplayName { get; set; }
     public UserRole Role { get; set; } = UserRole.User;
     public bool IsActive { get; set; } = true;
+    public bool EmailConfirmed { get; set; }
+    public DateTime? EmailConfirmedAtUtc { get; set; }
+    public string? EmailConfirmationTokenHash { get; set; }
+    public DateTime? EmailConfirmationTokenExpiresAtUtc { get; set; }
+    public DateTime? EmailConfirmationSentAtUtc { get; set; }
     public AuthProvider AuthProvider { get; set; } = AuthProvider.Local;
     public string? ExternalProviderId { get; set; }
     public bool HasUnlimitedAiUsage { get; set; } = false;

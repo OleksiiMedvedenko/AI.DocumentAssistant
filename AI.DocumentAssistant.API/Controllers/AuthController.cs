@@ -18,18 +18,59 @@ public sealed class AuthController : ControllerBase
         _authService = authService;
     }
 
+    [AllowAnonymous]
     [HttpPost("register")]
     public async Task<IActionResult> Register(RegisterRequest request, CancellationToken cancellationToken)
     {
         await _authService.RegisterAsync(new RegisterUserDto
         {
             Email = request.Email,
-            Password = request.Password
+            Password = request.Password,
+            ConfirmationUrl = request.ConfirmationUrl,
+            Language = request.Language
         }, cancellationToken);
 
-        return Ok();
+        return Ok(new
+        {
+            success = true
+        });
     }
 
+    [AllowAnonymous]
+    [HttpGet("confirm-email")]
+    public async Task<IActionResult> ConfirmEmail(
+        [FromQuery] string email,
+        [FromQuery] string token,
+        CancellationToken cancellationToken)
+    {
+        await _authService.ConfirmEmailAsync(email, token, cancellationToken);
+
+        return Ok(new
+        {
+            success = true
+        });
+    }
+
+    [AllowAnonymous]
+    [HttpPost("resend-confirmation-email")]
+    public async Task<IActionResult> ResendConfirmationEmail(
+        ResendConfirmationEmailRequest request,
+        CancellationToken cancellationToken)
+    {
+        await _authService.ResendConfirmationEmailAsync(new ResendConfirmationEmailDto
+        {
+            Email = request.Email,
+            ConfirmationUrl = request.ConfirmationUrl,
+            Language = request.Language
+        }, cancellationToken);
+
+        return Ok(new
+        {
+            success = true
+        });
+    }
+
+    [AllowAnonymous]
     [HttpPost("login")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken cancellationToken)
     {
@@ -47,6 +88,7 @@ public sealed class AuthController : ControllerBase
         });
     }
 
+    [AllowAnonymous]
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(RefreshTokenRequest request, CancellationToken cancellationToken)
     {

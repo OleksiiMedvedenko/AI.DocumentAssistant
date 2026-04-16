@@ -1,5 +1,6 @@
-﻿using System.Text.Json;
-using AI.DocumentAssistant.Application.Common.Exceptions;
+﻿using AI.DocumentAssistant.Application.Common.Exceptions;
+using System.Net;
+using System.Text.Json;
 
 namespace AI.DocumentAssistant.API.Middleware;
 
@@ -40,11 +41,12 @@ public sealed class GlobalExceptionMiddleware
         var statusCode = exception switch
         {
             BadRequestException => StatusCodes.Status400BadRequest,
-            UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
+            UnauthorizedException => StatusCodes.Status401Unauthorized,
             ForbiddenException => StatusCodes.Status403Forbidden,
             NotFoundException => StatusCodes.Status404NotFound,
             ConflictException => StatusCodes.Status409Conflict,
             QuotaExceededException => StatusCodes.Status429TooManyRequests,
+            ServiceUnavailableException => (int)HttpStatusCode.ServiceUnavailable,
             _ => StatusCodes.Status500InternalServerError
         };
 
