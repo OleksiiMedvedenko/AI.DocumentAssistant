@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -23,6 +23,11 @@
     <ProjectReference Include="..\AI.DocumentAssistant.Application\AI.DocumentAssistant.Application.csproj" />
     <ProjectReference Include="..\AI.DocumentAssistant.Domain\AI.DocumentAssistant.Domain.csproj" />
     <ProjectReference Include="..\AI.DocumentAssistant.Infrastructure\AI.DocumentAssistant.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Unit\" />
+    <Folder Include="Properties\" />
   </ItemGroup>
 
 </Project>

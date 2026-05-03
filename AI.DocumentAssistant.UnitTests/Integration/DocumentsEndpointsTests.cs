@@ -22,7 +22,7 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
     [Fact]
     public async Task Upload_Should_Return_Metadata_For_Supported_File()
     {
-        var token = await TestAuthHelper.RegisterAndLoginAsync(_client);
+        var token = await TestAuthHelper.RegisterAndLoginAsync(_factory, _client);
         TestAuthHelper.SetBearerToken(_client, token);
 
         using var content = new MultipartFormDataContent();
@@ -31,10 +31,14 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
         content.Add(fileContent, "file", "sample.txt");
 
         var response = await _client.PostAsync("/api/documents/upload", content);
+        var responseBody = await response.Content.ReadAsStringAsync();
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            $"response body was: {responseBody}");
 
         var body = await response.Content.ReadFromJsonAsync<UploadDocumentResponseDto>();
+
         body.Should().NotBeNull();
         body!.OriginalFileName.Should().Be("sample.txt");
         body.Id.Should().NotBeEmpty();
@@ -43,8 +47,8 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
     [Fact]
     public async Task Summarize_Should_Return_Language_Aware_Summary_For_Ready_Document()
     {
-        var email = $"sum_{Guid.NewGuid():N}@test.local";
-        var token = await TestAuthHelper.RegisterAndLoginAsync(_client, email);
+        var email = $"sum-{Guid.NewGuid():N}@test.local";
+        var token = await TestAuthHelper.RegisterAndLoginAsync(_factory, _client, email);
         TestAuthHelper.SetBearerToken(_client, token);
 
         Guid documentId;
@@ -52,6 +56,7 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
             (_, documentId) = await TestDataSeeder.SeedReadyDocumentAsync(
                 db,
                 email,
@@ -62,9 +67,14 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
             $"/api/documents/{documentId}/summarize",
             new { Language = "en" });
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            $"response body was: {responseBody}");
 
         var body = await response.Content.ReadFromJsonAsync<SummarizeResponseDto>();
+
         body.Should().NotBeNull();
         body!.DocumentId.Should().Be(documentId);
         body.Summary.Should().StartWith("SUMMARY::en::");
@@ -73,8 +83,8 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
     [Fact]
     public async Task Extract_Should_Save_And_Return_Json_With_Language()
     {
-        var email = $"extract_{Guid.NewGuid():N}@test.local";
-        var token = await TestAuthHelper.RegisterAndLoginAsync(_client, email);
+        var email = $"extract-{Guid.NewGuid():N}@test.local";
+        var token = await TestAuthHelper.RegisterAndLoginAsync(_factory, _client, email);
         TestAuthHelper.SetBearerToken(_client, token);
 
         Guid documentId;
@@ -82,6 +92,7 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
             (_, documentId) = await TestDataSeeder.SeedReadyDocumentAsync(
                 db,
                 email,
@@ -97,9 +108,14 @@ public sealed class DocumentsEndpointsTests : IClassFixture<CustomWebApplication
                 Language = "pl"
             });
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            $"response body was: {responseBody}");
 
         var body = await response.Content.ReadFromJsonAsync<ExtractResponseDto>();
+
         body.Should().NotBeNull();
         body!.DocumentId.Should().Be(documentId);
         body.JsonResult.Should().Contain("\"extractionType\":\"generic\"");

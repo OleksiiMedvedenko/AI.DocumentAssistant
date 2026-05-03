@@ -1,5 +1,6 @@
-﻿using AI.DocumentAssistant.API;
+using AI.DocumentAssistant.API;
 using AI.DocumentAssistant.Application.Abstractions.AI;
+using AI.DocumentAssistant.Application.Abstractions.Communication;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using AI.DocumentAssistant.UnitTests.TestDoubles;
 using Microsoft.AspNetCore.Hosting;
@@ -32,6 +33,14 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("OpenAI__Model", "gpt-4o-mini");
         Environment.SetEnvironmentVariable("OpenAI__BaseUrl", "https://api.openai.com/v1/");
 
+        Environment.SetEnvironmentVariable("Smtp__Host", "localhost");
+        Environment.SetEnvironmentVariable("Smtp__Port", "2525");
+        Environment.SetEnvironmentVariable("Smtp__UserName", "test-user");
+        Environment.SetEnvironmentVariable("Smtp__Password", "test-password");
+        Environment.SetEnvironmentVariable("Smtp__FromEmail", "noreply@test.local");
+        Environment.SetEnvironmentVariable("Smtp__FromName", "AI Document Assistant Tests");
+        Environment.SetEnvironmentVariable("Smtp__EnableSsl", "false");
+
         _storageRoot = Path.Combine(
             Path.GetTempPath(),
             "ai-document-assistant-tests",
@@ -50,6 +59,8 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll(typeof(AppDbContext));
             services.RemoveAll(typeof(IOpenAiService));
             services.RemoveAll(typeof(IEmbeddingService));
+            services.RemoveAll(typeof(IEmailSender));
+            services.RemoveAll(typeof(FakeEmailSender));
 
             services.AddDbContext<AppDbContext>(options =>
             {
@@ -58,6 +69,8 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             services.AddScoped<IOpenAiService, FakeOpenAiService>();
             services.AddScoped<IEmbeddingService, FakeEmbeddingService>();
+            services.AddSingleton<FakeEmailSender>();
+            services.AddSingleton<IEmailSender>(sp => sp.GetRequiredService<FakeEmailSender>());
 
             var serviceProvider = services.BuildServiceProvider();
 
@@ -90,6 +103,14 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("OpenAI__ApiKey", null);
         Environment.SetEnvironmentVariable("OpenAI__Model", null);
         Environment.SetEnvironmentVariable("OpenAI__BaseUrl", null);
+
+        Environment.SetEnvironmentVariable("Smtp__Host", null);
+        Environment.SetEnvironmentVariable("Smtp__Port", null);
+        Environment.SetEnvironmentVariable("Smtp__UserName", null);
+        Environment.SetEnvironmentVariable("Smtp__Password", null);
+        Environment.SetEnvironmentVariable("Smtp__FromEmail", null);
+        Environment.SetEnvironmentVariable("Smtp__FromName", null);
+        Environment.SetEnvironmentVariable("Smtp__EnableSsl", null);
 
         Environment.SetEnvironmentVariable("LocalStorage__RootPath", null);
     }

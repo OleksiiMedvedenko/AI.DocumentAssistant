@@ -22,8 +22,8 @@ public sealed class ChatAndCompareEndpointsTests : IClassFixture<CustomWebApplic
     [Fact]
     public async Task Chat_Should_Return_Answer_And_Create_Session_For_Ready_Document()
     {
-        var email = $"chat_{Guid.NewGuid():N}@test.local";
-        var token = await TestAuthHelper.RegisterAndLoginAsync(_client, email);
+        var email = $"chat-{Guid.NewGuid():N}@test.local";
+        var token = await TestAuthHelper.RegisterAndLoginAsync(_factory, _client, email);
         TestAuthHelper.SetBearerToken(_client, token);
 
         Guid documentId;
@@ -31,6 +31,7 @@ public sealed class ChatAndCompareEndpointsTests : IClassFixture<CustomWebApplic
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
             (_, documentId) = await TestDataSeeder.SeedReadyDocumentAsync(
                 db,
                 email,
@@ -45,9 +46,14 @@ public sealed class ChatAndCompareEndpointsTests : IClassFixture<CustomWebApplic
                 Language = "en"
             });
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            $"response body was: {responseBody}");
 
         var body = await response.Content.ReadFromJsonAsync<AskDocumentResponseDto>();
+
         body.Should().NotBeNull();
         body!.ChatSessionId.Should().NotBeEmpty();
         body.Answer.Should().StartWith("ANSWER::en::");
@@ -56,8 +62,8 @@ public sealed class ChatAndCompareEndpointsTests : IClassFixture<CustomWebApplic
     [Fact]
     public async Task Compare_Should_Return_Language_Aware_Comparison_Result()
     {
-        var email = $"compare_{Guid.NewGuid():N}@test.local";
-        var token = await TestAuthHelper.RegisterAndLoginAsync(_client, email);
+        var email = $"compare-{Guid.NewGuid():N}@test.local";
+        var token = await TestAuthHelper.RegisterAndLoginAsync(_factory, _client, email);
         TestAuthHelper.SetBearerToken(_client, token);
 
         Guid firstDocumentId;
@@ -89,9 +95,14 @@ public sealed class ChatAndCompareEndpointsTests : IClassFixture<CustomWebApplic
                 Language = "ua"
             });
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            $"response body was: {responseBody}");
 
         var body = await response.Content.ReadFromJsonAsync<CompareResponseDto>();
+
         body.Should().NotBeNull();
         body!.FirstDocumentId.Should().Be(firstDocumentId);
         body.SecondDocumentId.Should().Be(secondDocumentId);

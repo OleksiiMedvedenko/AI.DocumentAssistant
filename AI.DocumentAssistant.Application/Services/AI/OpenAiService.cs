@@ -283,16 +283,6 @@ public sealed class OpenAiService : IOpenAiService
             $"DOCUMENT:\n{safeText}";
     }
 
-    private static string BuildQuestionAnsweringDeveloperPrompt(string languageInstruction)
-    {
-        return
-            "You answer questions about a document. " +
-            "Use the provided document context as the primary source. " +
-            "Do not invent facts. " +
-            "If something is inferred rather than explicitly stated, clearly say so. " +
-            languageInstruction;
-    }
-
     private static string BuildComparisonDeveloperPrompt(string languageInstruction)
     {
         return

@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +11,8 @@ public static class TestDataSeeder
         AppDbContext dbContext,
         string email,
         string text,
-        string fileName = "doc1.txt")
+        string fileName = "doc1.txt",
+        Guid? folderId = null)
     {
         var user = await dbContext.Users
             .FirstOrDefaultAsync(x => x.Email == email);
@@ -40,6 +41,7 @@ public static class TestDataSeeder
         {
             Id = Guid.NewGuid(),
             UserId = user.Id,
+            FolderId = folderId,
             FileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}",
             OriginalFileName = fileName,
             ContentType = "text/plain",

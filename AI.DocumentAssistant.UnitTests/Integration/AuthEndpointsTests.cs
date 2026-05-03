@@ -1,32 +1,30 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
+using AI.DocumentAssistant.UnitTests.Infrastructure;
 using FluentAssertions;
 using Xunit;
 
 namespace AI.DocumentAssistant.UnitTests.Integration;
 
-public sealed class AuthEndpointsTests : IClassFixture<Infrastructure.CustomWebApplicationFactory>
+public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {
+    private readonly CustomWebApplicationFactory _factory;
     private readonly HttpClient _client;
 
-    public AuthEndpointsTests(Infrastructure.CustomWebApplicationFactory factory)
+    public AuthEndpointsTests(CustomWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
     }
 
     [Fact]
     public async Task Register_And_Login_Should_Return_AccessToken_And_RefreshToken()
     {
-        var email = $"auth_{Guid.NewGuid():N}@test.local";
+        var email = TestAuthHelper.CreateUniqueEmail("auth");
         var password = "P@ssword123!";
 
-        var registerResponse = await _client.PostAsJsonAsync("/api/auth/register", new
-        {
-            Email = email,
-            Password = password
-        });
-
-        registerResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        await TestAuthHelper.RegisterAsync(_client, email, password);
+        await TestAuthHelper.ConfirmUserEmailAsync(_factory, email);
 
         var loginResponse = await _client.PostAsJsonAsync("/api/auth/login", new
         {
@@ -34,9 +32,14 @@ public sealed class AuthEndpointsTests : IClassFixture<Infrastructure.CustomWebA
             Password = password
         });
 
-        loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var loginBody = await loginResponse.Content.ReadAsStringAsync();
+
+        loginResponse.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            $"login response body was: {loginBody}");
 
         var body = await loginResponse.Content.ReadFromJsonAsync<AuthResponseDto>();
+
         body.Should().NotBeNull();
         body!.AccessToken.Should().NotBeNullOrWhiteSpace();
         body.RefreshToken.Should().NotBeNullOrWhiteSpace();
@@ -46,14 +49,18 @@ public sealed class AuthEndpointsTests : IClassFixture<Infrastructure.CustomWebA
     [Fact]
     public async Task Me_Should_Return_Current_User_When_Authorized()
     {
-        var token = await Infrastructure.TestAuthHelper.RegisterAndLoginAsync(_client);
-        Infrastructure.TestAuthHelper.SetBearerToken(_client, token);
+        var token = await TestAuthHelper.RegisterAndLoginAsync(_factory, _client);
+        TestAuthHelper.SetBearerToken(_client, token);
 
         var response = await _client.GetAsync("/api/auth/me");
+        var responseBody = await response.Content.ReadAsStringAsync();
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            $"response body was: {responseBody}");
 
         var body = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
+
         body.Should().NotBeNull();
         body!.Email.Should().Contain("@test.local");
         body.Id.Should().NotBeEmpty();
@@ -70,6 +77,10 @@ public sealed class AuthEndpointsTests : IClassFixture<Infrastructure.CustomWebA
     {
         public Guid Id { get; set; }
         public string Email { get; set; } = default!;
+        public string? DisplayName { get; set; }
+        public string? Role { get; set; }
+        public bool IsActive { get; set; }
+        public string? AuthProvider { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 }
