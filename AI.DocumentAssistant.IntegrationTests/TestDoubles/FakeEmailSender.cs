@@ -1,6 +1,6 @@
 using AI.DocumentAssistant.Application.Abstractions.Communication;
 
-namespace AI.DocumentAssistant.UnitTests.TestDoubles;
+namespace AI.DocumentAssistant.IntegrationTests.TestDoubles;
 
 public sealed class FakeEmailSender : IEmailSender
 {

@@ -1,8 +1,8 @@
+using AI.DocumentAssistant.IntegrationTests.TestDoubles;
 using System.Net;
 using System.Text.RegularExpressions;
-using AI.DocumentAssistant.UnitTests.TestDoubles;
 
-namespace AI.DocumentAssistant.UnitTests.Infrastructure;
+namespace AI.DocumentAssistant.IntegrationTests.Infrastructure;
 
 public static class EmailTestHelper
 {

@@ -1,6 +1,6 @@
 ﻿using AI.DocumentAssistant.Application.Abstractions.AI;
 
-namespace AI.DocumentAssistant.UnitTests.TestDoubles;
+namespace AI.DocumentAssistant.IntegrationTests.TestDoubles;
 
 public sealed class FakeEmbeddingService : IEmbeddingService
 {

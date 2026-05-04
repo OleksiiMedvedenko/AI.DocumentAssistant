@@ -1,12 +1,12 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
 using AI.DocumentAssistant.Infrastructure.Persistence;
-using AI.DocumentAssistant.UnitTests.Infrastructure;
+using AI.DocumentAssistant.IntegrationTests.Infrastructure;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
-namespace AI.DocumentAssistant.UnitTests.Integration;
+namespace AI.DocumentAssistant.IntegrationTests.Integration;
 
 public sealed class ChatAndCompareEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {

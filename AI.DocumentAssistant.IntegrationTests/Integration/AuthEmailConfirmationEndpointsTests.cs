@@ -1,13 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using AI.DocumentAssistant.Infrastructure.Persistence;
-using AI.DocumentAssistant.UnitTests.Infrastructure;
-using AI.DocumentAssistant.UnitTests.TestDoubles;
+using AI.DocumentAssistant.IntegrationTests.TestDoubles;
+using AI.DocumentAssistant.IntegrationTests.Infrastructure;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
-namespace AI.DocumentAssistant.UnitTests.Integration;
+namespace AI.DocumentAssistant.IntegrationTests.Integration;
 
 public sealed class AuthEmailConfirmationEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {

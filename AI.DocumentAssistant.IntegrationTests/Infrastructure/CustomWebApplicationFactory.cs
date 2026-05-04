@@ -2,7 +2,7 @@ using AI.DocumentAssistant.API;
 using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Communication;
 using AI.DocumentAssistant.Infrastructure.Persistence;
-using AI.DocumentAssistant.UnitTests.TestDoubles;
+using AI.DocumentAssistant.IntegrationTests.TestDoubles;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
@@ -12,7 +12,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Data.Common;
 using Xunit;
 
-namespace AI.DocumentAssistant.UnitTests.Infrastructure;
+namespace AI.DocumentAssistant.IntegrationTests.Infrastructure;
 
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {

@@ -5,7 +5,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace AI.DocumentAssistant.UnitTests.Infrastructure;
+namespace AI.DocumentAssistant.IntegrationTests.Infrastructure;
 
 public static class TestAuthHelper
 {

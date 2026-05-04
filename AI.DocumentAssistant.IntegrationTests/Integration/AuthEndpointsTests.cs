@@ -1,10 +1,10 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
-using AI.DocumentAssistant.UnitTests.Infrastructure;
+using AI.DocumentAssistant.IntegrationTests.Infrastructure;
 using FluentAssertions;
 using Xunit;
 
-namespace AI.DocumentAssistant.UnitTests.Integration;
+namespace AI.DocumentAssistant.IntegrationTests.Integration;
 
 public sealed class AuthEndpointsTests : IClassFixture<CustomWebApplicationFactory>
 {

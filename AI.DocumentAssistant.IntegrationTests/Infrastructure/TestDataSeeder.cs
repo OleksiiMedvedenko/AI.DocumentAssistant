@@ -3,7 +3,7 @@ using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
-namespace AI.DocumentAssistant.UnitTests.Infrastructure;
+namespace AI.DocumentAssistant.IntegrationTests.Infrastructure;
 
 public static class TestDataSeeder
 {
