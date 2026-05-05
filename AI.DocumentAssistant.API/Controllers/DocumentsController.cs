@@ -59,6 +59,18 @@ public sealed class DocumentsController : ControllerBase
         return Ok(await _documentService.GetAllAsync(folderId, cancellationToken));
     }
 
+    [HttpGet("inbox")]
+    public async Task<IActionResult> GetInbox(CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.GetInboxAsync(cancellationToken));
+    }
+
+    [HttpGet("dashboard")]
+    public async Task<IActionResult> GetDashboard(CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.GetDashboardAsync(cancellationToken));
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id, CancellationToken cancellationToken)
     {
@@ -146,6 +158,42 @@ public sealed class DocumentsController : ControllerBase
             cancellationToken);
 
         return Ok(result);
+    }
+
+    [HttpGet("{id:guid}/folder-suggestions")]
+    public async Task<IActionResult> GetFolderSuggestions(Guid id, CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.GetFolderSuggestionsAsync(id, cancellationToken));
+    }
+
+    [HttpPost("{id:guid}/folder-suggestions/regenerate")]
+    public async Task<IActionResult> RegenerateFolderSuggestions(Guid id, CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.RegenerateFolderSuggestionsAsync(id, cancellationToken));
+    }
+
+    [HttpGet("{id:guid}/intelligence")]
+    public async Task<IActionResult> GetIntelligenceSnapshot(Guid id, CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.GetIntelligenceSnapshotAsync(id, cancellationToken));
+    }
+
+    [HttpPost("{id:guid}/folder-suggestions/{suggestionId:guid}/accept")]
+    public async Task<IActionResult> AcceptFolderSuggestion(Guid id, Guid suggestionId, CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.AcceptFolderSuggestionAsync(id, suggestionId, cancellationToken));
+    }
+
+    [HttpPost("{id:guid}/folder-suggestions/{suggestionId:guid}/reject")]
+    public async Task<IActionResult> RejectFolderSuggestion(Guid id, Guid suggestionId, CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.RejectFolderSuggestionAsync(id, suggestionId, cancellationToken));
+    }
+
+    [HttpGet("{id:guid}/related")]
+    public async Task<IActionResult> GetRelatedDocuments(Guid id, CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.GetRelatedDocumentsAsync(id, cancellationToken));
     }
 
     [HttpGet("{id:guid}/preview-meta")]

@@ -30,4 +30,9 @@ public sealed class User
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     public ICollection<UserUsageRecord> UsageRecords { get; set; } = new List<UserUsageRecord>();
     public ICollection<UserQuotaOverride> QuotaOverrides { get; set; } = new List<UserQuotaOverride>();
+    public ICollection<DocumentFolderSuggestion> DocumentFolderSuggestions { get; set; } = new List<DocumentFolderSuggestion>();
+    public ICollection<UserFolderRule> FolderRules { get; set; } = new List<UserFolderRule>();
+    public ICollection<AiActionTemplate> AiActionTemplates { get; set; } = new List<AiActionTemplate>();
+    public ICollection<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots { get; set; } = new List<DocumentIntelligenceSnapshot>();
+    public ICollection<FolderEmbeddingProfile> FolderEmbeddingProfiles { get; set; } = new List<FolderEmbeddingProfile>();
 }

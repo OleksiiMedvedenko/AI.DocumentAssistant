@@ -13,11 +13,16 @@ namespace AI.DocumentAssistant.Application.Documents.Services
     {
         private readonly AppDbContext _dbContext;
         private readonly ICurrentUserService _currentUserService;
+        private readonly IDocumentIntelligenceService _documentIntelligenceService;
 
-        public DocumentFolderService(AppDbContext dbContext, ICurrentUserService currentUserService)
+        public DocumentFolderService(
+            AppDbContext dbContext,
+            ICurrentUserService currentUserService,
+            IDocumentIntelligenceService documentIntelligenceService)
         {
             _dbContext = dbContext;
             _currentUserService = currentUserService;
+            _documentIntelligenceService = documentIntelligenceService;
         }
 
         public async Task<List<DocumentFolderDto>> GetTreeAsync(CancellationToken cancellationToken)
@@ -180,6 +185,164 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
+
+        public async Task<List<FolderDuplicateSuggestionDto>> GetDuplicateSuggestionsAsync(CancellationToken cancellationToken)
+        {
+            var userId = _currentUserService.GetUserId();
+
+            var folders = await _dbContext.DocumentFolders
+                .Where(x => x.UserId == userId)
+                .OrderBy(x => x.Name)
+                .ToListAsync(cancellationToken);
+
+            var result = new List<FolderDuplicateSuggestionDto>();
+
+            for (var i = 0; i < folders.Count; i++)
+            {
+                for (var j = i + 1; j < folders.Count; j++)
+                {
+                    var first = folders[i];
+                    var second = folders[j];
+
+                    if (first.ParentFolderId != second.ParentFolderId)
+                    {
+                        continue;
+                    }
+
+                    var similarity = CalculateNameSimilarity(first.NameEn, second.NameEn);
+                    if (similarity < 0.72m)
+                    {
+                        continue;
+                    }
+
+                    result.Add(new FolderDuplicateSuggestionDto
+                    {
+                        FirstFolderId = first.Id,
+                        FirstFolderName = first.Name,
+                        SecondFolderId = second.Id,
+                        SecondFolderName = second.Name,
+                        Similarity = similarity,
+                        Reason = "Folder names are very similar and live under the same parent. Consider merging or renaming them."
+                    });
+                }
+            }
+
+            return result
+                .OrderByDescending(x => x.Similarity)
+                .Take(20)
+                .ToList();
+        }
+
+
+        public async Task<MergeDocumentFoldersResultDto> MergeAsync(
+            Guid sourceFolderId,
+            MergeDocumentFoldersRequestDto request,
+            CancellationToken cancellationToken)
+        {
+            var userId = _currentUserService.GetUserId();
+
+            if (sourceFolderId == request.TargetFolderId)
+            {
+                throw new BadRequestException("Source and target folders must be different.");
+            }
+
+            var source = await _dbContext.DocumentFolders
+                .FirstOrDefaultAsync(x => x.Id == sourceFolderId && x.UserId == userId, cancellationToken);
+
+            var target = await _dbContext.DocumentFolders
+                .FirstOrDefaultAsync(x => x.Id == request.TargetFolderId && x.UserId == userId, cancellationToken);
+
+            if (source is null || target is null)
+            {
+                throw new NotFoundException("Folder not found.");
+            }
+
+            var documents = await _dbContext.Documents
+                .Where(x => x.UserId == userId && x.FolderId == sourceFolderId)
+                .ToListAsync(cancellationToken);
+
+            foreach (var document in documents)
+            {
+                document.FolderId = target.Id;
+                document.FolderClassificationStatus = "merged-folder";
+                document.FolderClassificationReason = $"Moved from merged folder '{source.Name}' to '{target.Name}'.";
+                document.WasFolderAutoAssigned = false;
+            }
+
+            var suggestions = await _dbContext.DocumentFolderSuggestions
+                .Where(x => x.UserId == userId && x.ExistingFolderId == sourceFolderId)
+                .ToListAsync(cancellationToken);
+
+            foreach (var suggestion in suggestions)
+            {
+                suggestion.ExistingFolderId = target.Id;
+                suggestion.ProposedKey = target.Key;
+                suggestion.ProposedName = target.Name;
+                suggestion.ProposedNamePl = target.NamePl;
+                suggestion.ProposedNameEn = target.NameEn;
+                suggestion.ProposedNameUa = target.NameUa;
+                suggestion.ProposedParentFolderId = target.ParentFolderId;
+                suggestion.Reason = $"{suggestion.Reason} Source folder was merged into target folder.";
+            }
+
+            var rules = await _dbContext.UserFolderRules
+                .Where(x => x.UserId == userId && x.FolderId == sourceFolderId)
+                .ToListAsync(cancellationToken);
+
+            foreach (var rule in rules)
+            {
+                rule.FolderId = target.Id;
+                rule.Weight = Math.Min(3m, rule.Weight + 0.10m);
+                rule.LastMatchedAtUtc = DateTime.UtcNow;
+            }
+
+            var childFolders = await _dbContext.DocumentFolders
+                .Where(x => x.UserId == userId && x.ParentFolderId == sourceFolderId)
+                .ToListAsync(cancellationToken);
+
+            foreach (var child in childFolders)
+            {
+                child.ParentFolderId = target.Id;
+            }
+
+            var folderChatSessions = await _dbContext.ChatSessions
+                .Where(x => x.UserId == userId && x.FolderId == sourceFolderId)
+                .ToListAsync(cancellationToken);
+
+            foreach (var session in folderChatSessions)
+            {
+                session.FolderId = target.Id;
+            }
+
+            var sourceProfile = await _dbContext.FolderEmbeddingProfiles
+                .FirstOrDefaultAsync(x => x.UserId == userId && x.FolderId == sourceFolderId, cancellationToken);
+
+            if (sourceProfile is not null)
+            {
+                _dbContext.FolderEmbeddingProfiles.Remove(sourceProfile);
+            }
+
+            var deleted = false;
+            if (request.DeleteSourceFolder)
+            {
+                _dbContext.DocumentFolders.Remove(source);
+                deleted = true;
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await _documentIntelligenceService.UpdateFolderProfileAsync(userId, target.Id, cancellationToken);
+
+            return new MergeDocumentFoldersResultDto
+            {
+                SourceFolderId = sourceFolderId,
+                TargetFolderId = target.Id,
+                MovedDocuments = documents.Count,
+                MovedSuggestions = suggestions.Count,
+                MovedUserRules = rules.Count,
+                SourceFolderDeleted = deleted
+            };
+        }
+
         private async Task EnsureParentBelongsToUserAsync(Guid userId, Guid? parentFolderId, CancellationToken cancellationToken)
         {
             if (parentFolderId is null)
@@ -215,6 +378,59 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             var safe = Regex.Replace(compact, @"[^a-z0-9\-]", "");
             safe = Regex.Replace(safe, @"\-{2,}", "-").Trim('-');
             return string.IsNullOrWhiteSpace(safe) ? "folder" : safe;
+        }
+
+
+
+        private static decimal CalculateNameSimilarity(string first, string second)
+        {
+            var a = Regex.Replace(first.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "");
+            var b = Regex.Replace(second.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "");
+
+            if (a.Length == 0 || b.Length == 0)
+            {
+                return 0m;
+            }
+
+            if (a == b)
+            {
+                return 1m;
+            }
+
+            if (a.Contains(b) || b.Contains(a))
+            {
+                return 0.86m;
+            }
+
+            var distance = LevenshteinDistance(a, b);
+            var max = Math.Max(a.Length, b.Length);
+            return Math.Round(1m - (decimal)distance / max, 4);
+        }
+
+        private static int LevenshteinDistance(string first, string second)
+        {
+            var costs = new int[second.Length + 1];
+            for (var j = 0; j < costs.Length; j++)
+            {
+                costs[j] = j;
+            }
+
+            for (var i = 1; i <= first.Length; i++)
+            {
+                costs[0] = i;
+                var previous = i - 1;
+
+                for (var j = 1; j <= second.Length; j++)
+                {
+                    var current = costs[j];
+                    costs[j] = first[i - 1] == second[j - 1]
+                        ? previous
+                        : Math.Min(Math.Min(costs[j - 1], costs[j]), previous) + 1;
+                    previous = current;
+                }
+            }
+
+            return costs[second.Length];
         }
 
         private static DocumentFolderDto ToDto(DocumentFolder folder, int documentCount)

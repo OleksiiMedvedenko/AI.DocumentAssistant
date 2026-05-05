@@ -20,6 +20,11 @@ public sealed class AppDbContext : DbContext, IApplicationDbContext
     public DbSet<ExtractedData> ExtractedData => Set<ExtractedData>();
     public DbSet<UserUsageRecord> UserUsageRecords => Set<UserUsageRecord>();
     public DbSet<UserQuotaOverride> UserQuotaOverrides => Set<UserQuotaOverride>();
+    public DbSet<DocumentFolderSuggestion> DocumentFolderSuggestions => Set<DocumentFolderSuggestion>();
+    public DbSet<UserFolderRule> UserFolderRules => Set<UserFolderRule>();
+    public DbSet<AiActionTemplate> AiActionTemplates => Set<AiActionTemplate>();
+    public DbSet<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots => Set<DocumentIntelligenceSnapshot>();
+    public DbSet<FolderEmbeddingProfile> FolderEmbeddingProfiles => Set<FolderEmbeddingProfile>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

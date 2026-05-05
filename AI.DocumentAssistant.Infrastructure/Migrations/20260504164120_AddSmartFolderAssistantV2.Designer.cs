@@ -4,6 +4,7 @@ using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AI.DocumentAssistant.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260504164120_AddSmartFolderAssistantV2")]
+    partial class AddSmartFolderAssistantV2
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -325,9 +328,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Property<Guid?>("ExistingFolderId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<decimal>("FinalScore")
-                        .HasColumnType("decimal(5,4)");
-
                     b.Property<string>("ProposedKey")
                         .IsRequired()
                         .HasMaxLength(150)
@@ -367,22 +367,13 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Property<DateTime?>("RejectedAtUtc")
                         .HasColumnType("datetime2");
 
-                    b.Property<decimal>("RuleScore")
-                        .HasColumnType("decimal(5,4)");
-
                     b.Property<decimal>("Score")
-                        .HasColumnType("decimal(5,4)");
-
-                    b.Property<decimal>("SemanticScore")
                         .HasColumnType("decimal(5,4)");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
-
-                    b.Property<decimal>("UserHistoryScore")
-                        .HasColumnType("decimal(5,4)");
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uniqueidentifier");
@@ -398,76 +389,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.HasIndex("UserId", "DocumentId", "Status");
 
                     b.ToTable("DocumentFolderSuggestions", (string)null);
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.DocumentIntelligenceSnapshot", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("BusinessDomain")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<decimal>("Confidence")
-                        .HasColumnType("decimal(5,4)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("DocumentType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTime?>("DueDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("EffectiveDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Keywords")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<int?>("Month")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<string>("Topic")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int?>("Year")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentId")
-                        .IsUnique();
-
-                    b.HasIndex("UserId", "DocumentType", "BusinessDomain");
-
-                    b.HasIndex("UserId", "Year", "Month");
-
-                    b.ToTable("DocumentIntelligenceSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.ExtractedData", b =>
@@ -496,43 +417,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.HasIndex("DocumentId");
 
                     b.ToTable("ExtractedData", (string)null);
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.FolderEmbeddingProfile", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("DocumentCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("EmbeddingJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<Guid>("FolderId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("SourceText")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("nvarchar(4000)");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("FolderId")
-                        .IsUnique();
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("FolderEmbeddingProfiles", (string)null);
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.RefreshToken", b =>
@@ -900,25 +784,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.DocumentIntelligenceSnapshot", b =>
-                {
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.Document", "Document")
-                        .WithOne("IntelligenceSnapshot")
-                        .HasForeignKey("AI.DocumentAssistant.Domain.Entities.DocumentIntelligenceSnapshot", "DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "User")
-                        .WithMany("DocumentIntelligenceSnapshots")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.Navigation("Document");
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.ExtractedData", b =>
                 {
                     b.HasOne("AI.DocumentAssistant.Domain.Entities.Document", "Document")
@@ -928,25 +793,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.FolderEmbeddingProfile", b =>
-                {
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.DocumentFolder", "Folder")
-                        .WithOne("EmbeddingProfile")
-                        .HasForeignKey("AI.DocumentAssistant.Domain.Entities.FolderEmbeddingProfile", "FolderId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "User")
-                        .WithMany("FolderEmbeddingProfiles")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.Navigation("Folder");
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.RefreshToken", b =>
@@ -1015,8 +861,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Navigation("Extractions");
 
                     b.Navigation("FolderSuggestions");
-
-                    b.Navigation("IntelligenceSnapshot");
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.DocumentFolder", b =>
@@ -1026,8 +870,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Navigation("Children");
 
                     b.Navigation("Documents");
-
-                    b.Navigation("EmbeddingProfile");
 
                     b.Navigation("Suggestions");
 
@@ -1042,11 +884,7 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
 
                     b.Navigation("DocumentFolders");
 
-                    b.Navigation("DocumentIntelligenceSnapshots");
-
                     b.Navigation("Documents");
-
-                    b.Navigation("FolderEmbeddingProfiles");
 
                     b.Navigation("FolderRules");
 

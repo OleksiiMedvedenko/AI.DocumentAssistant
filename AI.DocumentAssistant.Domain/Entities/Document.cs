@@ -42,10 +42,12 @@ namespace AI.DocumentAssistant.Domain.Entities
 
         public User User { get; set; } = default!;
         public DocumentFolder? Folder { get; set; }
+        public DocumentIntelligenceSnapshot? IntelligenceSnapshot { get; set; }
 
         public ICollection<DocumentChunk> Chunks { get; set; } = new List<DocumentChunk>();
         public ICollection<ExtractedData> Extractions { get; set; } = new List<ExtractedData>();
         public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
+        public ICollection<DocumentFolderSuggestion> FolderSuggestions { get; set; } = new List<DocumentFolderSuggestion>();
 
         public int ProcessingAttemptCount { get; set; }
         public DateTime? LastProcessingAttemptAtUtc { get; set; }

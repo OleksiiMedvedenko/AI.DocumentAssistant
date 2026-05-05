@@ -11,6 +11,14 @@ public interface IDocumentService
         CancellationToken cancellationToken);
 
     Task<List<DocumentDto>> GetAllAsync(Guid? folderId, CancellationToken cancellationToken);
+    Task<List<DocumentDto>> GetInboxAsync(CancellationToken cancellationToken);
+    Task<DocumentDashboardDto> GetDashboardAsync(CancellationToken cancellationToken);
+    Task<List<DocumentFolderSuggestionResponseDto>> GetFolderSuggestionsAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<DocumentDto> AcceptFolderSuggestionAsync(Guid documentId, Guid suggestionId, CancellationToken cancellationToken);
+    Task<DocumentFolderSuggestionResponseDto> RejectFolderSuggestionAsync(Guid documentId, Guid suggestionId, CancellationToken cancellationToken);
+    Task<List<RelatedDocumentDto>> GetRelatedDocumentsAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<RegenerateFolderSuggestionsResultDto> RegenerateFolderSuggestionsAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<DocumentIntelligenceSnapshotDto> GetIntelligenceSnapshotAsync(Guid documentId, CancellationToken cancellationToken);
     Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken);
     Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken);
     Task DeleteAsync(Guid documentId, CancellationToken cancellationToken);

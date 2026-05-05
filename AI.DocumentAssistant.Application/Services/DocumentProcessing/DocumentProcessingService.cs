@@ -16,6 +16,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
     private readonly IEmbeddingService _embeddingService;
     private readonly IDocumentFolderClassifier _documentFolderClassifier;
     private readonly IDocumentFolderDecisionEngine _documentFolderDecisionEngine;
+    private readonly IDocumentIntelligenceService _documentIntelligenceService;
 
     public DocumentProcessingService(
         AppDbContext dbContext,
@@ -24,7 +25,8 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         IDocumentChunkingService chunkingService,
         IEmbeddingService embeddingService,
         IDocumentFolderClassifier documentFolderClassifier,
-        IDocumentFolderDecisionEngine documentFolderDecisionEngine)
+        IDocumentFolderDecisionEngine documentFolderDecisionEngine,
+        IDocumentIntelligenceService documentIntelligenceService)
     {
         _dbContext = dbContext;
         _fileStorageService = fileStorageService;
@@ -33,6 +35,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         _embeddingService = embeddingService;
         _documentFolderClassifier = documentFolderClassifier;
         _documentFolderDecisionEngine = documentFolderDecisionEngine;
+        _documentIntelligenceService = documentIntelligenceService;
     }
 
     public async Task ProcessAsync(Guid documentId, CancellationToken cancellationToken)
@@ -123,7 +126,19 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
                 throw new InvalidOperationException("Document processing did not create any chunks.");
             }
 
+            await _documentIntelligenceService.EnsureSnapshotAsync(document, cancellationToken);
+            var previousFolderId = document.FolderId;
             await OrganizeDocumentAsync(document, cancellationToken);
+
+            if (previousFolderId is Guid oldFolderId)
+            {
+                await _documentIntelligenceService.UpdateFolderProfileAsync(document.UserId, oldFolderId, cancellationToken);
+            }
+
+            if (document.FolderId is Guid newFolderId)
+            {
+                await _documentIntelligenceService.UpdateFolderProfileAsync(document.UserId, newFolderId, cancellationToken);
+            }
 
             document.Status = DocumentStatus.Ready;
             document.ProcessedAtUtc = DateTime.UtcNow;

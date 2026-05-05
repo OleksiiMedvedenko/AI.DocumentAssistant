@@ -11,6 +11,7 @@ using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace AI.DocumentAssistant.Application.Documents.Services;
 
@@ -29,6 +30,9 @@ public sealed class DocumentService : IDocumentService
     private readonly IUsageQuotaService _usageQuotaService;
     private readonly IUsageTrackingService _usageTrackingService;
     private readonly IDocumentPreviewConverter _documentPreviewConverter;
+    private readonly IDocumentFolderClassifier _documentFolderClassifier;
+    private readonly IDocumentFolderDecisionEngine _documentFolderDecisionEngine;
+    private readonly IDocumentIntelligenceService _documentIntelligenceService;
 
     public DocumentService(
         AppDbContext dbContext,
@@ -38,7 +42,10 @@ public sealed class DocumentService : IDocumentService
         IOpenAiService openAiService,
         IUsageQuotaService usageQuotaService,
         IUsageTrackingService usageTrackingService,
-        IDocumentPreviewConverter documentPreviewConverter)
+        IDocumentPreviewConverter documentPreviewConverter,
+        IDocumentFolderClassifier documentFolderClassifier,
+        IDocumentFolderDecisionEngine documentFolderDecisionEngine,
+        IDocumentIntelligenceService documentIntelligenceService)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
@@ -48,6 +55,9 @@ public sealed class DocumentService : IDocumentService
         _usageQuotaService = usageQuotaService;
         _usageTrackingService = usageTrackingService;
         _documentPreviewConverter = documentPreviewConverter;
+        _documentFolderClassifier = documentFolderClassifier;
+        _documentFolderDecisionEngine = documentFolderDecisionEngine;
+        _documentIntelligenceService = documentIntelligenceService;
     }
 
     public async Task<DocumentDto> UploadAsync(UploadDocumentRequestDto request, CancellationToken cancellationToken)
@@ -282,6 +292,451 @@ public sealed class DocumentService : IDocumentService
             .ToListAsync(cancellationToken);
     }
 
+
+    public async Task<List<DocumentDto>> GetInboxAsync(CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        return await _dbContext.Documents
+            .Where(x => x.UserId == userId && (x.IsNew || x.FolderId == null || x.FolderClassificationStatus == "suggested"))
+            .OrderByDescending(x => x.UploadedAtUtc)
+            .Select(x => new DocumentDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                ContentType = x.ContentType,
+                SizeInBytes = x.SizeInBytes,
+                Status = x.Status,
+                UploadedAtUtc = x.UploadedAtUtc,
+                FolderId = x.FolderId,
+                FolderName = x.Folder != null ? x.Folder.Name : null,
+                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                FolderClassificationStatus = x.FolderClassificationStatus,
+                FolderClassificationConfidence = x.FolderClassificationConfidence,
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned,
+                IsNew = x.IsNew,
+                ProcessingProfile = x.ProcessingProfile
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<DocumentDashboardDto> GetDashboardAsync(CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var documents = await _dbContext.Documents
+            .Include(x => x.Folder)
+            .Where(x => x.UserId == userId)
+            .OrderByDescending(x => x.UploadedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        var pendingSuggestionEntities = await _dbContext.DocumentFolderSuggestions
+            .Where(x => x.UserId == userId && x.Status == "pending")
+            .ToListAsync(cancellationToken);
+
+        pendingSuggestionEntities = pendingSuggestionEntities
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Rank)
+            .Take(10)
+            .ToList();
+
+        var existingFolderIds = pendingSuggestionEntities
+            .Where(x => x.ExistingFolderId.HasValue)
+            .Select(x => x.ExistingFolderId!.Value)
+            .Distinct()
+            .ToList();
+
+        var existingFolders = existingFolderIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _dbContext.DocumentFolders
+                .Where(x => x.UserId == userId && existingFolderIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken);
+
+        var pendingSuggestions = pendingSuggestionEntities
+            .Select(x => new DocumentFolderSuggestionResponseDto
+            {
+                Id = x.Id,
+                DocumentId = x.DocumentId,
+                ExistingFolderId = x.ExistingFolderId,
+                ExistingFolderName = x.ExistingFolderId.HasValue &&
+                                     existingFolders.TryGetValue(x.ExistingFolderId.Value, out var folderName)
+                    ? folderName
+                    : null,
+                ProposedKey = x.ProposedKey,
+                ProposedName = x.ProposedName,
+                ProposedNamePl = x.ProposedNamePl,
+                ProposedNameEn = x.ProposedNameEn,
+                ProposedNameUa = x.ProposedNameUa,
+                ProposedParentFolderId = x.ProposedParentFolderId,
+                Score = x.Score,
+                RuleScore = x.RuleScore,
+                SemanticScore = x.SemanticScore,
+                UserHistoryScore = x.UserHistoryScore,
+                FinalScore = x.FinalScore,
+                Rank = x.Rank,
+                Reason = x.Reason,
+                Status = x.Status,
+                CreatedAtUtc = x.CreatedAtUtc,
+                AcceptedAtUtc = x.AcceptedAtUtc,
+                RejectedAtUtc = x.RejectedAtUtc
+            })
+            .ToList();
+
+        return new DocumentDashboardDto
+        {
+            TotalDocuments = documents.Count,
+            NewDocuments = documents.Count(x => x.IsNew),
+            UnfiledDocuments = documents.Count(x => x.FolderId is null),
+            PendingReviewDocuments = documents.Count(x =>
+                x.FolderClassificationStatus == "suggested" ||
+                x.FolderClassificationStatus == "pending"),
+            ReadyDocuments = documents.Count(x => x.Status == DocumentStatus.Ready),
+            FailedDocuments = documents.Count(x => x.Status == DocumentStatus.Failed),
+
+            ByStatus = documents
+                .GroupBy(x => x.Status.ToString())
+                .Select(x => new DocumentDashboardBucketDto
+                {
+                    Key = x.Key,
+                    Name = x.Key,
+                    Count = x.Count()
+                })
+                .OrderByDescending(x => x.Count)
+                .ToList(),
+
+            ByFolder = documents
+                .GroupBy(x => new
+                {
+                    FolderId = x.FolderId?.ToString() ?? "unfiled",
+                    Name = x.Folder != null ? x.Folder.Name : "Unfiled"
+                })
+                .Select(x => new DocumentDashboardBucketDto
+                {
+                    Key = x.Key.FolderId,
+                    Name = x.Key.Name,
+                    Count = x.Count()
+                })
+                .OrderByDescending(x => x.Count)
+                .Take(10)
+                .ToList(),
+
+            ByDocumentType = documents
+                .GroupBy(x => GuessDocumentType(x.OriginalFileName, x.ExtractedText))
+                .Select(x => new DocumentDashboardBucketDto
+                {
+                    Key = x.Key,
+                    Name = ToDisplayName(x.Key),
+                    Count = x.Count()
+                })
+                .OrderByDescending(x => x.Count)
+                .ToList(),
+
+            RecentDocuments = documents
+                .Take(10)
+                .Select(ToDocumentDto)
+                .ToList(),
+
+            PendingSuggestions = pendingSuggestions
+        };
+    }
+
+    public async Task<List<DocumentFolderSuggestionResponseDto>> GetFolderSuggestionsAsync(
+    Guid documentId,
+    CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var exists = await _dbContext.Documents.AnyAsync(
+            x => x.Id == documentId && x.UserId == userId,
+            cancellationToken);
+
+        if (!exists)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var suggestions = await _dbContext.DocumentFolderSuggestions
+            .Where(x => x.DocumentId == documentId && x.UserId == userId)
+            .ToListAsync(cancellationToken);
+
+        suggestions = suggestions
+            .OrderBy(x => x.Rank)
+            .ThenByDescending(x => x.Score)
+            .ToList();
+
+        var existingFolderIds = suggestions
+            .Where(x => x.ExistingFolderId.HasValue)
+            .Select(x => x.ExistingFolderId!.Value)
+            .Distinct()
+            .ToList();
+
+        var existingFolders = existingFolderIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _dbContext.DocumentFolders
+                .Where(x => x.UserId == userId && existingFolderIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken);
+
+        return suggestions
+            .Select(x => new DocumentFolderSuggestionResponseDto
+            {
+                Id = x.Id,
+                DocumentId = x.DocumentId,
+                ExistingFolderId = x.ExistingFolderId,
+                ExistingFolderName = x.ExistingFolderId.HasValue &&
+                                     existingFolders.TryGetValue(x.ExistingFolderId.Value, out var folderName)
+                    ? folderName
+                    : null,
+                ProposedKey = x.ProposedKey,
+                ProposedName = x.ProposedName,
+                ProposedNamePl = x.ProposedNamePl,
+                ProposedNameEn = x.ProposedNameEn,
+                ProposedNameUa = x.ProposedNameUa,
+                ProposedParentFolderId = x.ProposedParentFolderId,
+                Score = x.Score,
+                RuleScore = x.RuleScore,
+                SemanticScore = x.SemanticScore,
+                UserHistoryScore = x.UserHistoryScore,
+                FinalScore = x.FinalScore,
+                Rank = x.Rank,
+                Reason = x.Reason,
+                Status = x.Status,
+                CreatedAtUtc = x.CreatedAtUtc,
+                AcceptedAtUtc = x.AcceptedAtUtc,
+                RejectedAtUtc = x.RejectedAtUtc
+            })
+            .ToList();
+    }
+
+    public async Task<DocumentDto> AcceptFolderSuggestionAsync(Guid documentId, Guid suggestionId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var suggestion = await _dbContext.DocumentFolderSuggestions
+            .FirstOrDefaultAsync(x => x.Id == suggestionId && x.DocumentId == documentId && x.UserId == userId, cancellationToken);
+
+        if (suggestion is null)
+        {
+            throw new NotFoundException("Folder suggestion not found.");
+        }
+
+        if (suggestion.Status != "pending")
+        {
+            throw new BadRequestException("Folder suggestion is no longer pending.");
+        }
+
+        var folder = suggestion.ExistingFolderId is Guid existingFolderId
+            ? await _dbContext.DocumentFolders.FirstOrDefaultAsync(x => x.Id == existingFolderId && x.UserId == userId, cancellationToken)
+            : await GetOrCreateSuggestedFolderAsync(userId, suggestion, cancellationToken);
+
+        if (folder is null)
+        {
+            throw new NotFoundException("Suggested folder not found.");
+        }
+
+        document.FolderId = folder.Id;
+        document.FolderClassificationStatus = "accepted-suggestion";
+        document.FolderClassificationConfidence = suggestion.Score;
+        document.FolderClassificationReason = $"User accepted AI folder suggestion: {suggestion.Reason}";
+        document.WasFolderAutoAssigned = false;
+        document.IsNew = false;
+
+        suggestion.Status = "accepted";
+        suggestion.AcceptedAtUtc = DateTime.UtcNow;
+
+        var otherSuggestions = await _dbContext.DocumentFolderSuggestions
+            .Where(x => x.DocumentId == documentId && x.Id != suggestion.Id && x.Status == "pending")
+            .ToListAsync(cancellationToken);
+
+        foreach (var other in otherSuggestions)
+        {
+            other.Status = "superseded";
+        }
+
+        await UpsertUserFolderRuleAsync(userId, folder.Id, document, suggestion, createdFromCorrection: true, cancellationToken);
+        await _documentIntelligenceService.UpdateFolderProfileAsync(userId, folder.Id, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return await _dbContext.Documents
+            .Include(x => x.Folder)
+            .Where(x => x.Id == document.Id)
+            .Select(x => new DocumentDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                ContentType = x.ContentType,
+                SizeInBytes = x.SizeInBytes,
+                Status = x.Status,
+                UploadedAtUtc = x.UploadedAtUtc,
+                FolderId = x.FolderId,
+                FolderName = x.Folder != null ? x.Folder.Name : null,
+                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                FolderClassificationStatus = x.FolderClassificationStatus,
+                FolderClassificationConfidence = x.FolderClassificationConfidence,
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned,
+                IsNew = x.IsNew,
+                ProcessingProfile = x.ProcessingProfile
+            })
+            .FirstAsync(cancellationToken);
+    }
+
+    public async Task<DocumentFolderSuggestionResponseDto> RejectFolderSuggestionAsync(Guid documentId, Guid suggestionId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var suggestion = await _dbContext.DocumentFolderSuggestions
+            .Include(x => x.ExistingFolder)
+            .FirstOrDefaultAsync(x => x.Id == suggestionId && x.DocumentId == documentId && x.UserId == userId, cancellationToken);
+
+        if (suggestion is null)
+        {
+            throw new NotFoundException("Folder suggestion not found.");
+        }
+
+        suggestion.Status = "rejected";
+        suggestion.RejectedAtUtc = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new DocumentFolderSuggestionResponseDto
+        {
+            Id = suggestion.Id,
+            DocumentId = suggestion.DocumentId,
+            ExistingFolderId = suggestion.ExistingFolderId,
+            ExistingFolderName = suggestion.ExistingFolder?.Name,
+            ProposedKey = suggestion.ProposedKey,
+            ProposedName = suggestion.ProposedName,
+            ProposedNamePl = suggestion.ProposedNamePl,
+            ProposedNameEn = suggestion.ProposedNameEn,
+            ProposedNameUa = suggestion.ProposedNameUa,
+            ProposedParentFolderId = suggestion.ProposedParentFolderId,
+            Score = suggestion.Score,
+            RuleScore = suggestion.RuleScore,
+            SemanticScore = suggestion.SemanticScore,
+            UserHistoryScore = suggestion.UserHistoryScore,
+            FinalScore = suggestion.FinalScore,
+            Rank = suggestion.Rank,
+            Reason = suggestion.Reason,
+            Status = suggestion.Status,
+            CreatedAtUtc = suggestion.CreatedAtUtc,
+            AcceptedAtUtc = suggestion.AcceptedAtUtc,
+            RejectedAtUtc = suggestion.RejectedAtUtc
+        };
+    }
+
+    public async Task<List<RelatedDocumentDto>> GetRelatedDocumentsAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var sourceText = BuildSearchText(document);
+        var sourceTokens = Tokenize(sourceText);
+        var sourceType = GuessDocumentType(document.OriginalFileName, document.ExtractedText);
+
+        var candidates = await _dbContext.Documents
+            .Include(x => x.Folder)
+            .Where(x => x.UserId == userId && x.Id != documentId)
+            .ToListAsync(cancellationToken);
+
+        return candidates
+            .Select(x =>
+            {
+                var score = CalculateRelatedScore(document, sourceTokens, sourceType, x);
+                return new RelatedDocumentDto
+                {
+                    DocumentId = x.Id,
+                    OriginalFileName = x.OriginalFileName,
+                    FolderId = x.FolderId,
+                    FolderName = x.Folder?.Name,
+                    Status = x.Status,
+                    Score = score,
+                    Reason = BuildRelatedReason(document, x, sourceType, score),
+                    UploadedAtUtc = x.UploadedAtUtc
+                };
+            })
+            .Where(x => x.Score >= 0.15m)
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.UploadedAtUtc)
+            .Take(10)
+            .ToList();
+    }
+
+
+    public async Task<RegenerateFolderSuggestionsResultDto> RegenerateFolderSuggestionsAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        var existingFolders = await _dbContext.DocumentFolders
+            .Where(x => x.UserId == userId)
+            .ToListAsync(cancellationToken);
+
+        var intelligence = await _documentIntelligenceService.EnsureSnapshotAsync(document, cancellationToken);
+        var analysis = await _documentFolderClassifier.AnalyzeAsync(document, existingFolders, cancellationToken);
+        var previousFolderId = document.FolderId;
+        var originalMode = document.OrganizationMode;
+
+        document.OrganizationMode = DocumentOrganizationMode.AutoAssignExistingOnly;
+        await _documentFolderDecisionEngine.DecideAsync(document, analysis, existingFolders, cancellationToken);
+        document.OrganizationMode = originalMode;
+        document.FolderId = previousFolderId;
+        document.FolderClassificationStatus = previousFolderId is null ? "suggested" : document.FolderClassificationStatus;
+        document.FolderClassificationReason = "Folder suggestions regenerated by user.";
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var suggestions = await GetFolderSuggestionsAsync(documentId, cancellationToken);
+        return new RegenerateFolderSuggestionsResultDto
+        {
+            DocumentId = documentId,
+            Intelligence = intelligence,
+            Suggestions = suggestions
+        };
+    }
+
+    public async Task<DocumentIntelligenceSnapshotDto> GetIntelligenceSnapshotAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        return await _documentIntelligenceService.EnsureSnapshotAsync(document, cancellationToken);
+    }
+
     public async Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
@@ -359,7 +814,27 @@ public sealed class DocumentService : IDocumentService
 
         document.FolderId = request.FolderId;
         document.FolderClassificationStatus = "manual";
+        document.FolderClassificationReason = request.FolderId is null
+            ? "User removed folder assignment."
+            : "Folder selected manually by user.";
+        document.FolderClassificationConfidence = request.FolderId is null ? null : 1m;
         document.WasFolderAutoAssigned = false;
+
+        if (request.FolderId is Guid movedFolderId)
+        {
+            await UpsertUserFolderRuleAsync(
+                userId,
+                movedFolderId,
+                document,
+                suggestion: null,
+                createdFromCorrection: true,
+                cancellationToken);
+        }
+
+        if (request.FolderId is Guid profileFolderId)
+        {
+            await _documentIntelligenceService.UpdateFolderProfileAsync(userId, profileFolderId, cancellationToken);
+        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -806,4 +1281,222 @@ public sealed class DocumentService : IDocumentService
             document.ContentType,
             cancellationToken);
     }
+
+    private async Task<DocumentFolder> GetOrCreateSuggestedFolderAsync(
+        Guid userId,
+        DocumentFolderSuggestion suggestion,
+        CancellationToken cancellationToken)
+    {
+        if (suggestion.ProposedParentFolderId is Guid parentId)
+        {
+            var parentExists = await _dbContext.DocumentFolders.AnyAsync(
+                x => x.Id == parentId && x.UserId == userId,
+                cancellationToken);
+
+            if (!parentExists)
+            {
+                suggestion.ProposedParentFolderId = null;
+            }
+        }
+
+        var existing = await _dbContext.DocumentFolders.FirstOrDefaultAsync(
+            x => x.UserId == userId &&
+                 x.ParentFolderId == suggestion.ProposedParentFolderId &&
+                 x.Key == suggestion.ProposedKey,
+            cancellationToken);
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var folder = new DocumentFolder
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            ParentFolderId = suggestion.ProposedParentFolderId,
+            Key = suggestion.ProposedKey,
+            Name = suggestion.ProposedName,
+            NamePl = suggestion.ProposedNamePl,
+            NameEn = suggestion.ProposedNameEn,
+            NameUa = suggestion.ProposedNameUa,
+            IsSystemGenerated = true,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.DocumentFolders.Add(folder);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return folder;
+    }
+
+    private async Task UpsertUserFolderRuleAsync(
+        Guid userId,
+        Guid folderId,
+        Document document,
+        DocumentFolderSuggestion? suggestion,
+        bool createdFromCorrection,
+        CancellationToken cancellationToken)
+    {
+        var pattern = BuildLearningPattern(document);
+        if (string.IsNullOrWhiteSpace(pattern))
+        {
+            return;
+        }
+
+        var documentType = GuessDocumentType(document.OriginalFileName, document.ExtractedText);
+
+        var rule = await _dbContext.UserFolderRules.FirstOrDefaultAsync(
+            x => x.UserId == userId && x.FolderId == folderId && x.Pattern == pattern,
+            cancellationToken);
+
+        if (rule is null)
+        {
+            _dbContext.UserFolderRules.Add(new UserFolderRule
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                FolderId = folderId,
+                Pattern = pattern,
+                DocumentType = documentType,
+                Topic = suggestion?.ProposedKey,
+                Weight = createdFromCorrection ? 1.25m : 1m,
+                CreatedFromCorrection = createdFromCorrection,
+                CreatedAtUtc = DateTime.UtcNow,
+                LastMatchedAtUtc = DateTime.UtcNow
+            });
+
+            return;
+        }
+
+        rule.Weight = Math.Min(rule.Weight + 0.25m, 5m);
+        rule.LastMatchedAtUtc = DateTime.UtcNow;
+    }
+
+    private static string BuildLearningPattern(Document document)
+    {
+        var source = BuildSearchText(document);
+        var tokens = Tokenize(source)
+            .Where(x => x.Length >= 4)
+            .Take(8)
+            .ToList();
+
+        return string.Join(' ', tokens);
+    }
+
+    private static decimal CalculateRelatedScore(
+        Document source,
+        HashSet<string> sourceTokens,
+        string sourceType,
+        Document candidate)
+    {
+        var candidateText = BuildSearchText(candidate);
+        var candidateTokens = Tokenize(candidateText);
+
+        var shared = sourceTokens.Intersect(candidateTokens).Count();
+        var union = sourceTokens.Union(candidateTokens).Count();
+        var tokenScore = union == 0 ? 0m : (decimal)shared / union;
+
+        var folderScore = source.FolderId is not null && source.FolderId == candidate.FolderId ? 0.25m : 0m;
+        var typeScore = sourceType == GuessDocumentType(candidate.OriginalFileName, candidate.ExtractedText) ? 0.25m : 0m;
+        var filenameScore = Path.GetFileNameWithoutExtension(source.OriginalFileName)
+            .Split(new[] { '-', '_', ' ', '.', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(part => candidate.OriginalFileName.Contains(part, StringComparison.OrdinalIgnoreCase) && part.Length >= 4)
+            ? 0.15m
+            : 0m;
+
+        return Math.Round(Math.Min(1m, tokenScore + folderScore + typeScore + filenameScore), 4);
+    }
+
+    private static string BuildRelatedReason(Document source, Document candidate, string sourceType, decimal score)
+    {
+        if (source.FolderId is not null && source.FolderId == candidate.FolderId)
+        {
+            return "Same folder and similar document signals.";
+        }
+
+        if (sourceType == GuessDocumentType(candidate.OriginalFileName, candidate.ExtractedText))
+        {
+            return $"Same detected document type: {ToDisplayName(sourceType)}.";
+        }
+
+        return score >= 0.35m
+            ? "Similar keywords and document metadata."
+            : "Weak semantic similarity based on keywords and metadata.";
+    }
+
+    private static DocumentDto ToDocumentDto(Document document)
+    {
+        return new DocumentDto
+        {
+            Id = document.Id,
+            OriginalFileName = document.OriginalFileName,
+            ContentType = document.ContentType,
+            SizeInBytes = document.SizeInBytes,
+            Status = document.Status,
+            UploadedAtUtc = document.UploadedAtUtc,
+            FolderId = document.FolderId,
+            FolderName = document.Folder?.Name,
+            FolderNamePl = document.Folder?.NamePl,
+            FolderNameEn = document.Folder?.NameEn,
+            FolderNameUa = document.Folder?.NameUa,
+            FolderClassificationStatus = document.FolderClassificationStatus,
+            FolderClassificationConfidence = document.FolderClassificationConfidence,
+            WasFolderAutoAssigned = document.WasFolderAutoAssigned,
+            IsNew = document.IsNew,
+            ProcessingProfile = document.ProcessingProfile
+        };
+    }
+
+    private static string BuildSearchText(Document document)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine(document.OriginalFileName);
+        builder.AppendLine(document.ContentType);
+        if (!string.IsNullOrWhiteSpace(document.QuickSummary)) builder.AppendLine(document.QuickSummary);
+        if (!string.IsNullOrWhiteSpace(document.Summary)) builder.AppendLine(document.Summary);
+        if (!string.IsNullOrWhiteSpace(document.ExtractedText))
+        {
+            builder.AppendLine(document.ExtractedText[..Math.Min(document.ExtractedText.Length, 3000)]);
+        }
+        return builder.ToString();
+    }
+
+    private static HashSet<string> Tokenize(string text)
+    {
+        return Regex.Matches(text.ToLowerInvariant(), @"[\p{L}\p{N}]{3,}")
+            .Select(x => x.Value)
+            .Where(x => !StopWords.Contains(x))
+            .Take(250)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string GuessDocumentType(string fileName, string? text)
+    {
+        var source = ($"{fileName} {text ?? string.Empty}").ToLowerInvariant();
+        if (source.Contains("invoice") || source.Contains("faktura") || source.Contains("vat") || source.Contains("seller") || source.Contains("buyer")) return "invoice";
+        if (source.Contains("contract") || source.Contains("agreement") || source.Contains("umowa") || source.Contains("parties")) return "contract";
+        if (source.Contains("cv") || source.Contains("resume") || source.Contains("curriculum") || source.Contains("candidate") || source.Contains("skills")) return "cv";
+        if (source.Contains("api") || source.Contains("swagger") || source.Contains("openapi") || source.Contains("documentation")) return "documentation";
+        if (source.Contains("report") || source.Contains("raport") || source.Contains("analysis")) return "report";
+        return "other";
+    }
+
+    private static string ToDisplayName(string key)
+    {
+        return key switch
+        {
+            "invoice" => "Invoices",
+            "contract" => "Contracts",
+            "cv" => "CVs",
+            "documentation" => "Documentation",
+            "report" => "Reports",
+            _ => "Other"
+        };
+    }
+
+    private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "the", "and", "for", "with", "from", "this", "that", "document", "file", "oraz", "jest", "dla", "or", "are", "was", "were"
+    };
+
 }

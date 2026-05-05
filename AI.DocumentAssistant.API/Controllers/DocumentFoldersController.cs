@@ -24,6 +24,12 @@ namespace AI.DocumentAssistant.API.Controllers
             return Ok(await _documentFolderService.GetTreeAsync(cancellationToken));
         }
 
+        [HttpGet("duplicate-suggestions")]
+        public async Task<IActionResult> GetDuplicateSuggestions(CancellationToken cancellationToken)
+        {
+            return Ok(await _documentFolderService.GetDuplicateSuggestionsAsync(cancellationToken));
+        }
+
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateDocumentFolderRequest request, CancellationToken cancellationToken)
         {
@@ -52,6 +58,21 @@ namespace AI.DocumentAssistant.API.Controllers
                     NamePl = request.NamePl,
                     NameEn = request.NameEn,
                     NameUa = request.NameUa
+                },
+                cancellationToken);
+
+            return Ok(result);
+        }
+
+        [HttpPost("{sourceFolderId:guid}/merge")]
+        public async Task<IActionResult> Merge(Guid sourceFolderId, [FromBody] MergeDocumentFoldersRequest request, CancellationToken cancellationToken)
+        {
+            var result = await _documentFolderService.MergeAsync(
+                sourceFolderId,
+                new MergeDocumentFoldersRequestDto
+                {
+                    TargetFolderId = request.TargetFolderId,
+                    DeleteSourceFolder = request.DeleteSourceFolder
                 },
                 cancellationToken);
 
