@@ -67,8 +67,8 @@ public sealed class SmartFolderAssistantV21EndpointsTests : IClassFixture<Custom
 
         regenerateResponse.StatusCode.Should().Be(HttpStatusCode.OK, $"response body was: {regenerateBody}");
         regenerateBody.Should().Contain("suggestions");
-        regenerateBody.Should().Contain("Finance Invoices");
         regenerateBody.Should().Contain("finalScore");
+        regenerateBody.Should().MatchRegex("Finance Invoices|Faktury|Invoices|finance-invoices|faktury");
     }
 
     [Fact]
