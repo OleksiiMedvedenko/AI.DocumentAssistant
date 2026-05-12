@@ -91,6 +91,12 @@ public sealed class DocumentsController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("{id:guid}/folder/confirm")]
+    public async Task<IActionResult> ConfirmFolderAssignment(Guid id, CancellationToken cancellationToken)
+    {
+        return Ok(await _documentService.ConfirmFolderAssignmentAsync(id, cancellationToken));
+    }
+
     [HttpGet("{documentId:guid}/status")]
     public async Task<IActionResult> GetStatus(Guid documentId, CancellationToken cancellationToken)
     {

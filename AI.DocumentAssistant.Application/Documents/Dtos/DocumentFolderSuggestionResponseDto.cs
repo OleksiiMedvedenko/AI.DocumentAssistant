@@ -19,6 +19,7 @@ public sealed class DocumentFolderSuggestionResponseDto
     public decimal FinalScore { get; set; }
     public int Rank { get; set; }
     public string Reason { get; set; } = default!;
+    public string ReasonCode { get; set; } = default!;
     public string Status { get; set; } = default!;
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? AcceptedAtUtc { get; set; }

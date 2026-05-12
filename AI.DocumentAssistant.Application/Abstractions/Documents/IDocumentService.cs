@@ -22,6 +22,7 @@ public interface IDocumentService
     Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken);
     Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken);
     Task DeleteAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<DocumentDto> ConfirmFolderAssignmentAsync(Guid documentId, CancellationToken cancellationToken);
     Task<DocumentDto> MoveToFolderAsync(Guid documentId, MoveDocumentToFolderRequestDto request, CancellationToken cancellationToken);
     Task<SummarizeResultDto> SummarizeAsync(Guid documentId, SummarizeDocumentRequestDto request, CancellationToken cancellationToken);
     Task<ExtractedDataDto> ExtractAsync(Guid documentId, ExtractDocumentRequestDto request, CancellationToken cancellationToken);

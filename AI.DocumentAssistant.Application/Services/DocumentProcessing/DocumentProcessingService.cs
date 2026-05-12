@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Application.Abstractions.AI;
+using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
@@ -162,7 +162,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         {
             document.FolderClassificationStatus = "manual";
             document.FolderClassificationConfidence = 1m;
-            document.FolderClassificationReason = "Folder selected manually during upload.";
+            document.FolderClassificationReason = "smart_folder.manual_upload_folder_selected";
             document.WasFolderAutoAssigned = false;
             return;
         }
@@ -171,7 +171,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         {
             document.FolderClassificationStatus = "disabled";
             document.FolderClassificationConfidence = null;
-            document.FolderClassificationReason = "Smart organization disabled for this document.";
+            document.FolderClassificationReason = "smart_folder.disabled";
             document.WasFolderAutoAssigned = false;
             return;
         }

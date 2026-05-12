@@ -1,4 +1,4 @@
-﻿namespace AI.DocumentAssistant.Application.Abstractions.AI;
+namespace AI.DocumentAssistant.Application.Abstractions.AI;
 
 public interface IOpenAiService
 {
@@ -17,6 +17,11 @@ public interface IOpenAiService
         string documentContext,
         string extractionType,
         string? language,
+        CancellationToken cancellationToken);
+
+    Task<string> AnalyzeFolderTreeAsync(
+        string developerPrompt,
+        string userPrompt,
         CancellationToken cancellationToken);
 
     Task<string> CompareDocumentsAsync(

@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Domain.Enums;
+using AI.DocumentAssistant.Domain.Enums;
 
 namespace AI.DocumentAssistant.Application.Documents.Dtos
 {
@@ -21,6 +21,8 @@ namespace AI.DocumentAssistant.Application.Documents.Dtos
         public string? FolderNameUa { get; set; }
 
         public string? FolderClassificationStatus { get; set; }
+        public string? FolderClassificationReason { get; set; }
+        public string? FolderClassificationReasonCode { get; set; }
         public decimal? FolderClassificationConfidence { get; set; }
         public bool WasFolderAutoAssigned { get; set; }
     }

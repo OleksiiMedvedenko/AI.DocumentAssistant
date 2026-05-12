@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Headers;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -155,6 +155,116 @@ public sealed class OpenAiService : IOpenAiService
                     role = "user",
                     content = $"EXTRACTION TYPE: {safeType}\n\nDOCUMENT:\n{safeContext}"
                 }
+            }
+        };
+
+        return SendChatCompletionAsync(request, cancellationToken);
+    }
+
+
+    public Task<string> AnalyzeFolderTreeAsync(
+        string developerPrompt,
+        string userPrompt,
+        CancellationToken cancellationToken)
+    {
+        var safeDeveloperPrompt = TrimInput(developerPrompt, 12_000);
+        var safeUserPrompt = TrimInput(userPrompt, 24_000);
+
+        var request = new
+        {
+            model = _options.Model,
+            temperature = 0.05,
+            response_format = new
+            {
+                type = "json_schema",
+                json_schema = new
+                {
+                    name = "smart_folder_decision",
+                    strict = true,
+                    schema = new
+                    {
+                        type = "object",
+                        additionalProperties = false,
+                        properties = new
+                        {
+                            documentKind = new { type = "string" },
+                            topic = new { type = "string" },
+                            decision = new
+                            {
+                                type = "string",
+                                @enum = new[] { "use_existing", "create_path", "needs_review", "uncategorized" }
+                            },
+                            confidence = new { type = "number", minimum = 0, maximum = 1 },
+                            existingFolderId = new { type = new[] { "string", "null" } },
+                            proposedPath = new
+                            {
+                                type = "array",
+                                maxItems = 4,
+                                items = new
+                                {
+                                    type = "object",
+                                    additionalProperties = false,
+                                    properties = new
+                                    {
+                                        key = new { type = "string" },
+                                        name = new { type = "string" },
+                                        namePl = new { type = "string" },
+                                        nameEn = new { type = "string" },
+                                        nameUa = new { type = "string" }
+                                    },
+                                    required = new[] { "key", "name", "namePl", "nameEn", "nameUa" }
+                                }
+                            },
+                            alternatives = new
+                            {
+                                type = "array",
+                                maxItems = 3,
+                                items = new
+                                {
+                                    type = "object",
+                                    additionalProperties = false,
+                                    properties = new
+                                    {
+                                        existingFolderId = new { type = new[] { "string", "null" } },
+                                        proposedPath = new
+                                        {
+                                            type = "array",
+                                            maxItems = 4,
+                                            items = new
+                                            {
+                                                type = "object",
+                                                additionalProperties = false,
+                                                properties = new
+                                                {
+                                                    key = new { type = "string" },
+                                                    name = new { type = "string" },
+                                                    namePl = new { type = "string" },
+                                                    nameEn = new { type = "string" },
+                                                    nameUa = new { type = "string" }
+                                                },
+                                                required = new[] { "key", "name", "namePl", "nameEn", "nameUa" }
+                                            }
+                                        },
+                                        confidence = new { type = "number", minimum = 0, maximum = 1 },
+                                        reasonCode = new { type = "string" }
+                                    },
+                                    required = new[] { "existingFolderId", "proposedPath", "confidence", "reasonCode" }
+                                }
+                            },
+                            reasonCode = new { type = "string" }
+                        },
+                        required = new[]
+                        {
+                            "documentKind", "topic", "decision", "confidence", "existingFolderId",
+                            "proposedPath", "alternatives", "reasonCode"
+                        }
+                    }
+                }
+            },
+            messages = new object[]
+            {
+                new { role = "developer", content = safeDeveloperPrompt },
+                new { role = "user", content = safeUserPrompt }
             }
         };
 

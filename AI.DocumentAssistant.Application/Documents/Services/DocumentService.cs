@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Application.Abstractions.AI;
+using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Common;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
@@ -167,6 +167,8 @@ public sealed class DocumentService : IDocumentService
                     FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
                     FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                     FolderClassificationStatus = x.FolderClassificationStatus,
+                    FolderClassificationReason = x.FolderClassificationReason,
+                    FolderClassificationReasonCode = x.FolderClassificationReason,
                     FolderClassificationConfidence = x.FolderClassificationConfidence,
                     WasFolderAutoAssigned = x.WasFolderAutoAssigned,
                     IsNew = x.IsNew,
@@ -251,12 +253,12 @@ public sealed class DocumentService : IDocumentService
     {
         if (request.FolderId is not null)
         {
-            return "Folder selected by user.";
+            return "smart_folder.manual_folder_selected";
         }
 
         return request.SmartOrganize
-            ? "Document queued for smart organization."
-            : "Smart organization disabled by user.";
+            ? "smart_folder.pending"
+            : "smart_folder.disabled";
     }
 
     public async Task<List<DocumentDto>> GetAllAsync(Guid? folderId, CancellationToken cancellationToken)
@@ -286,6 +288,8 @@ public sealed class DocumentService : IDocumentService
                 FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
                 FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                 FolderClassificationStatus = x.FolderClassificationStatus,
+                    FolderClassificationReason = x.FolderClassificationReason,
+                    FolderClassificationReasonCode = x.FolderClassificationReason,
                 FolderClassificationConfidence = x.FolderClassificationConfidence,
                 WasFolderAutoAssigned = x.WasFolderAutoAssigned
             })
@@ -314,6 +318,8 @@ public sealed class DocumentService : IDocumentService
                 FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
                 FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                 FolderClassificationStatus = x.FolderClassificationStatus,
+                    FolderClassificationReason = x.FolderClassificationReason,
+                    FolderClassificationReasonCode = x.FolderClassificationReason,
                 FolderClassificationConfidence = x.FolderClassificationConfidence,
                 WasFolderAutoAssigned = x.WasFolderAutoAssigned,
                 IsNew = x.IsNew,
@@ -377,6 +383,7 @@ public sealed class DocumentService : IDocumentService
                 FinalScore = x.FinalScore,
                 Rank = x.Rank,
                 Reason = x.Reason,
+                ReasonCode = x.Reason,
                 Status = x.Status,
                 CreatedAtUtc = x.CreatedAtUtc,
                 AcceptedAtUtc = x.AcceptedAtUtc,
@@ -501,6 +508,7 @@ public sealed class DocumentService : IDocumentService
                 FinalScore = x.FinalScore,
                 Rank = x.Rank,
                 Reason = x.Reason,
+                ReasonCode = x.Reason,
                 Status = x.Status,
                 CreatedAtUtc = x.CreatedAtUtc,
                 AcceptedAtUtc = x.AcceptedAtUtc,
@@ -546,7 +554,7 @@ public sealed class DocumentService : IDocumentService
         document.FolderId = folder.Id;
         document.FolderClassificationStatus = "accepted-suggestion";
         document.FolderClassificationConfidence = suggestion.Score;
-        document.FolderClassificationReason = $"User accepted AI folder suggestion: {suggestion.Reason}";
+        document.FolderClassificationReason = "smart_folder.suggestion_accepted";
         document.WasFolderAutoAssigned = false;
         document.IsNew = false;
 
@@ -583,6 +591,8 @@ public sealed class DocumentService : IDocumentService
                 FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
                 FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                 FolderClassificationStatus = x.FolderClassificationStatus,
+                    FolderClassificationReason = x.FolderClassificationReason,
+                    FolderClassificationReasonCode = x.FolderClassificationReason,
                 FolderClassificationConfidence = x.FolderClassificationConfidence,
                 WasFolderAutoAssigned = x.WasFolderAutoAssigned,
                 IsNew = x.IsNew,
@@ -595,6 +605,14 @@ public sealed class DocumentService : IDocumentService
     {
         var userId = _currentUserService.GetUserId();
 
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
         var suggestion = await _dbContext.DocumentFolderSuggestions
             .Include(x => x.ExistingFolder)
             .FirstOrDefaultAsync(x => x.Id == suggestionId && x.DocumentId == documentId && x.UserId == userId, cancellationToken);
@@ -604,8 +622,36 @@ public sealed class DocumentService : IDocumentService
             throw new NotFoundException("Folder suggestion not found.");
         }
 
+        if (suggestion.Status == "accepted")
+        {
+            throw new BadRequestException("Accepted folder suggestion cannot be rejected.");
+        }
+
+        var rejectedFolderId = suggestion.ExistingFolderId;
+        if (rejectedFolderId is null)
+        {
+            rejectedFolderId = await _dbContext.DocumentFolders
+                .Where(x => x.UserId == userId &&
+                            x.ParentFolderId == suggestion.ProposedParentFolderId &&
+                            x.Key == suggestion.ProposedKey)
+                .Select(x => (Guid?)x.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
         suggestion.Status = "rejected";
         suggestion.RejectedAtUtc = DateTime.UtcNow;
+        document.IsNew = false;
+
+        if (rejectedFolderId is Guid folderId && document.FolderId == folderId)
+        {
+            document.FolderId = null;
+            document.FolderClassificationStatus = "uncategorized";
+            document.FolderClassificationConfidence = null;
+            document.FolderClassificationReason = "smart_folder.suggestion_rejected_uncategorized";
+            document.WasFolderAutoAssigned = false;
+            await _documentIntelligenceService.UpdateFolderProfileAsync(userId, folderId, cancellationToken);
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return new DocumentFolderSuggestionResponseDto
@@ -627,6 +673,7 @@ public sealed class DocumentService : IDocumentService
             FinalScore = suggestion.FinalScore,
             Rank = suggestion.Rank,
             Reason = suggestion.Reason,
+            ReasonCode = suggestion.Reason,
             Status = suggestion.Status,
             CreatedAtUtc = suggestion.CreatedAtUtc,
             AcceptedAtUtc = suggestion.AcceptedAtUtc,
@@ -707,7 +754,7 @@ public sealed class DocumentService : IDocumentService
         document.OrganizationMode = originalMode;
         document.FolderId = previousFolderId;
         document.FolderClassificationStatus = previousFolderId is null ? "suggested" : document.FolderClassificationStatus;
-        document.FolderClassificationReason = "Folder suggestions regenerated by user.";
+        document.FolderClassificationReason = "smart_folder.suggestions_regenerated";
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -760,6 +807,8 @@ public sealed class DocumentService : IDocumentService
                 FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
                 FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                 FolderClassificationStatus = x.FolderClassificationStatus,
+                    FolderClassificationReason = x.FolderClassificationReason,
+                    FolderClassificationReasonCode = x.FolderClassificationReason,
                 FolderClassificationConfidence = x.FolderClassificationConfidence,
                 WasFolderAutoAssigned = x.WasFolderAutoAssigned
             })
@@ -786,6 +835,68 @@ public sealed class DocumentService : IDocumentService
             .FirstOrDefaultAsync(cancellationToken);
 
         return document ?? throw new NotFoundException("Document not found.");
+    }
+
+    public async Task<DocumentDto> ConfirmFolderAssignmentAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new NotFoundException("Document not found.");
+        }
+
+        document.IsNew = false;
+        document.WasFolderAutoAssigned = false;
+        document.FolderClassificationStatus = document.FolderId is null
+            ? "confirmed-uncategorized"
+            : "confirmed";
+        document.FolderClassificationReason = document.FolderId is null
+            ? "smart_folder.user_confirmed_uncategorized"
+            : "smart_folder.user_confirmed_assignment";
+
+        if (document.FolderId is Guid folderId)
+        {
+            document.FolderClassificationConfidence = 1m;
+            await UpsertUserFolderRuleAsync(
+                userId,
+                folderId,
+                document,
+                suggestion: null,
+                createdFromCorrection: true,
+                cancellationToken);
+            await _documentIntelligenceService.UpdateFolderProfileAsync(userId, folderId, cancellationToken);
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return await _dbContext.Documents
+            .Where(x => x.Id == documentId)
+            .Select(x => new DocumentDto
+            {
+                Id = x.Id,
+                OriginalFileName = x.OriginalFileName,
+                ContentType = x.ContentType,
+                SizeInBytes = x.SizeInBytes,
+                Status = x.Status,
+                UploadedAtUtc = x.UploadedAtUtc,
+                FolderId = x.FolderId,
+                FolderName = x.Folder != null ? x.Folder.Name : null,
+                FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
+                FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
+                FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
+                FolderClassificationStatus = x.FolderClassificationStatus,
+                FolderClassificationReason = x.FolderClassificationReason,
+                FolderClassificationReasonCode = x.FolderClassificationReason,
+                FolderClassificationConfidence = x.FolderClassificationConfidence,
+                WasFolderAutoAssigned = x.WasFolderAutoAssigned,
+                IsNew = x.IsNew,
+                ProcessingProfile = x.ProcessingProfile
+            })
+            .FirstAsync(cancellationToken);
     }
 
     public async Task<DocumentDto> MoveToFolderAsync(Guid documentId, MoveDocumentToFolderRequestDto request, CancellationToken cancellationToken)
@@ -815,10 +926,11 @@ public sealed class DocumentService : IDocumentService
         document.FolderId = request.FolderId;
         document.FolderClassificationStatus = "manual";
         document.FolderClassificationReason = request.FolderId is null
-            ? "User removed folder assignment."
-            : "Folder selected manually by user.";
+            ? "smart_folder.manual_folder_removed"
+            : "smart_folder.manual_folder_selected";
         document.FolderClassificationConfidence = request.FolderId is null ? null : 1m;
         document.WasFolderAutoAssigned = false;
+        document.IsNew = false;
 
         if (request.FolderId is Guid movedFolderId)
         {
@@ -854,6 +966,8 @@ public sealed class DocumentService : IDocumentService
                 FolderNameEn = x.Folder != null ? x.Folder.NameEn : null,
                 FolderNameUa = x.Folder != null ? x.Folder.NameUa : null,
                 FolderClassificationStatus = x.FolderClassificationStatus,
+                    FolderClassificationReason = x.FolderClassificationReason,
+                    FolderClassificationReasonCode = x.FolderClassificationReason,
                 FolderClassificationConfidence = x.FolderClassificationConfidence,
                 WasFolderAutoAssigned = x.WasFolderAutoAssigned
             })
@@ -1440,6 +1554,8 @@ public sealed class DocumentService : IDocumentService
             FolderNameEn = document.Folder?.NameEn,
             FolderNameUa = document.Folder?.NameUa,
             FolderClassificationStatus = document.FolderClassificationStatus,
+            FolderClassificationReason = document.FolderClassificationReason,
+            FolderClassificationReasonCode = document.FolderClassificationReason,
             FolderClassificationConfidence = document.FolderClassificationConfidence,
             WasFolderAutoAssigned = document.WasFolderAutoAssigned,
             IsNew = document.IsNew,
