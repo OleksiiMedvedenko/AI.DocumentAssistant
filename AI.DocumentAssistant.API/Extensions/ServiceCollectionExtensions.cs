@@ -20,6 +20,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDocumentFolderClassifier, DocumentFolderClassifier>();
         services.AddScoped<IDocumentIntelligenceService, DocumentIntelligenceService>();
         services.AddScoped<IAiActionTemplateService, AiActionTemplateService>();
+        services.AddScoped<IAiActionRunService, AiActionRunService>();
+        services.AddSingleton<IAiActionPdfRenderer, SimpleAiActionPdfRenderer>();
 
         services.AddScoped<IChatService, ChatService>();
         services.AddScoped<IChunkRetrievalService, HybridChunkRetrievalService>();

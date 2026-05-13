@@ -48,6 +48,7 @@ namespace AI.DocumentAssistant.Domain.Entities
         public ICollection<ExtractedData> Extractions { get; set; } = new List<ExtractedData>();
         public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
         public ICollection<DocumentFolderSuggestion> FolderSuggestions { get; set; } = new List<DocumentFolderSuggestion>();
+        public ICollection<AiActionRun> AiActionRuns { get; set; } = new List<AiActionRun>();
 
         public int ProcessingAttemptCount { get; set; }
         public DateTime? LastProcessingAttemptAtUtc { get; set; }

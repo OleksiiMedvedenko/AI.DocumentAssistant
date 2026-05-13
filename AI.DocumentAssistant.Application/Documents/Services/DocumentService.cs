@@ -986,6 +986,26 @@ public sealed class DocumentService : IDocumentService
             throw new NotFoundException("Document not found.");
         }
 
+        var actionRuns = await _dbContext.AiActionRuns
+            .Where(x => x.DocumentId == document.Id && x.UserId == userId)
+            .ToListAsync(cancellationToken);
+
+        if (actionRuns.Count > 0)
+        {
+            foreach (var run in actionRuns.Where(x => !string.IsNullOrWhiteSpace(x.ResultFilePath)))
+            {
+                try
+                {
+                    await _fileStorageService.DeleteAsync(run.ResultFilePath!, cancellationToken);
+                }
+                catch
+                {
+                }
+            }
+
+            _dbContext.AiActionRuns.RemoveRange(actionRuns);
+        }
+
         _dbContext.Documents.Remove(document);
         await _dbContext.SaveChangesAsync(cancellationToken);
         await _fileStorageService.DeleteAsync(document.StoragePath, cancellationToken);

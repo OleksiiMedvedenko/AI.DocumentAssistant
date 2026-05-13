@@ -24,6 +24,14 @@ public interface IOpenAiService
         string userPrompt,
         CancellationToken cancellationToken);
 
+    Task<string> RunDocumentActionAsync(
+        string documentContext,
+        string actionType,
+        string outputFormat,
+        string prompt,
+        string? language,
+        CancellationToken cancellationToken);
+
     Task<string> CompareDocumentsAsync(
         string firstDocumentText,
         string secondDocumentText,

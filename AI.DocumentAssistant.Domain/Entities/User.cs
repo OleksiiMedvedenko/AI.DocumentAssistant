@@ -33,6 +33,7 @@ public sealed class User
     public ICollection<DocumentFolderSuggestion> DocumentFolderSuggestions { get; set; } = new List<DocumentFolderSuggestion>();
     public ICollection<UserFolderRule> FolderRules { get; set; } = new List<UserFolderRule>();
     public ICollection<AiActionTemplate> AiActionTemplates { get; set; } = new List<AiActionTemplate>();
+    public ICollection<AiActionRun> AiActionRuns { get; set; } = new List<AiActionRun>();
     public ICollection<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots { get; set; } = new List<DocumentIntelligenceSnapshot>();
     public ICollection<FolderEmbeddingProfile> FolderEmbeddingProfiles { get; set; } = new List<FolderEmbeddingProfile>();
 }

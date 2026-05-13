@@ -40,6 +40,17 @@ public sealed class FakeOpenAiService : IOpenAiService
         var topic = source.Contains("księg") || source.Contains("ksieg") || source.Contains("account") ? "finance" :
             source.Contains("program") || source.Contains("developer") || source.Contains("it") ? "it" : "general";
 
+        if (kind == "invoice")
+        {
+            var existingInvoiceFolderId = ExtractFolderIdByKeyOrName(userPrompt, "finance-invoices", "Finance Invoices")
+                ?? ExtractFolderIdByKeyOrName(userPrompt, "invoices", "Invoices");
+            if (existingInvoiceFolderId is not null)
+            {
+                var existingJson = "{\"documentKind\":\"invoice\",\"topic\":\"finance\",\"decision\":\"use_existing\",\"confidence\":0.91,\"existingFolderId\":\"" + existingInvoiceFolderId + "\",\"proposedPath\":[],\"alternatives\":[],\"reasonCode\":\"smart_folder.existing_path_selected\"}";
+                return Task.FromResult(existingJson);
+            }
+        }
+
         string path;
         if (kind == "cv")
         {
@@ -61,6 +72,23 @@ public sealed class FakeOpenAiService : IOpenAiService
         return Task.FromResult(json);
     }
 
+    public Task<string> RunDocumentActionAsync(
+        string documentContext,
+        string actionType,
+        string outputFormat,
+        string prompt,
+        string? language,
+        CancellationToken cancellationToken)
+    {
+        var format = string.IsNullOrWhiteSpace(outputFormat) ? "markdown" : outputFormat.Trim().ToLowerInvariant();
+        if (format == "json")
+        {
+            return Task.FromResult($"{{\"actionType\":\"{actionType}\",\"language\":\"{Lang(language)}\",\"value\":\"fake action result\",\"preview\":\"{Escape(Trim(documentContext))}\"}}");
+        }
+
+        return Task.FromResult($"AI_ACTION::{format}::{Lang(language)}::{actionType}::{prompt}::CTX::{Trim(documentContext)}");
+    }
+
     public Task<string> CompareDocumentsAsync(
         string firstDocumentText,
         string secondDocumentText,
@@ -69,6 +97,33 @@ public sealed class FakeOpenAiService : IOpenAiService
         CancellationToken cancellationToken)
         => Task.FromResult(
             $"COMPARE::{Lang(language)}::{comparisonPrompt ?? "default"}::A::{Trim(firstDocumentText)}::B::{Trim(secondDocumentText)}");
+
+
+    private static string? ExtractFolderIdByKeyOrName(string prompt, string key, string name)
+    {
+        foreach (var line in (prompt ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!line.Contains($"key: {key}", StringComparison.OrdinalIgnoreCase) &&
+                !line.Contains(name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var marker = "id:";
+            var start = line.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+            {
+                continue;
+            }
+
+            start += marker.Length;
+            var end = line.IndexOf(';', start);
+            var value = end > start ? line[start..end].Trim() : line[start..].Trim();
+            return Guid.TryParse(value, out var id) ? id.ToString() : null;
+        }
+
+        return null;
+    }
 
     private static string JsonFolder(string key, string name)
         => $"{{\"key\":\"{key}\",\"name\":\"{name}\",\"namePl\":\"{name}\",\"nameEn\":\"{name}\",\"nameUa\":\"{name}\"}}";

@@ -181,6 +181,15 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                 session.Folder = null;
             }
 
+            var templates = await _dbContext.AiActionTemplates
+                .Where(x => x.UserId == userId && x.FolderId == folderId)
+                .ToListAsync(cancellationToken);
+
+            foreach (var template in templates)
+            {
+                template.FolderId = null;
+            }
+
             _dbContext.DocumentFolders.Remove(folder);
             await _dbContext.SaveChangesAsync(cancellationToken);
         }

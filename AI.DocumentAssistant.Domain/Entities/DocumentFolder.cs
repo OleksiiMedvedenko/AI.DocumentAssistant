@@ -20,6 +20,7 @@
         public FolderEmbeddingProfile? EmbeddingProfile { get; set; }
 
         public ICollection<DocumentFolder> Children { get; set; } = new List<DocumentFolder>();
+    public ICollection<AiActionTemplate> AiActionTemplates { get; set; } = new List<AiActionTemplate>();
         public ICollection<Document> Documents { get; set; } = new List<Document>();
         public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
         public ICollection<DocumentFolderSuggestion> Suggestions { get; set; } = new List<DocumentFolderSuggestion>();

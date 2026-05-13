@@ -19,9 +19,9 @@ public sealed class AiActionTemplatesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] string? documentType, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetAll([FromQuery] string? documentType, [FromQuery] Guid? folderId, CancellationToken cancellationToken)
     {
-        return Ok(await _service.GetAllAsync(documentType, cancellationToken));
+        return Ok(await _service.GetAllAsync(documentType, folderId, cancellationToken));
     }
 
     [HttpPost]
@@ -29,10 +29,15 @@ public sealed class AiActionTemplatesController : ControllerBase
     {
         var result = await _service.CreateAsync(new CreateAiActionTemplateRequestDto
         {
+            FolderId = request.FolderId,
             Name = request.Name,
+            Description = request.Description,
             DocumentType = request.DocumentType,
+            ActionType = request.ActionType,
             Prompt = request.Prompt,
-            OutputFormat = request.OutputFormat
+            OutputFormat = request.OutputFormat,
+            Language = request.Language,
+            SaveResult = request.SaveResult
         }, cancellationToken);
 
         return Ok(result);
@@ -43,10 +48,15 @@ public sealed class AiActionTemplatesController : ControllerBase
     {
         var result = await _service.UpdateAsync(templateId, new CreateAiActionTemplateRequestDto
         {
+            FolderId = request.FolderId,
             Name = request.Name,
+            Description = request.Description,
             DocumentType = request.DocumentType,
+            ActionType = request.ActionType,
             Prompt = request.Prompt,
-            OutputFormat = request.OutputFormat
+            OutputFormat = request.OutputFormat,
+            Language = request.Language,
+            SaveResult = request.SaveResult
         }, cancellationToken);
 
         return Ok(result);

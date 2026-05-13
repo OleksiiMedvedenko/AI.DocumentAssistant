@@ -23,6 +23,7 @@ public sealed class AppDbContext : DbContext, IApplicationDbContext
     public DbSet<DocumentFolderSuggestion> DocumentFolderSuggestions => Set<DocumentFolderSuggestion>();
     public DbSet<UserFolderRule> UserFolderRules => Set<UserFolderRule>();
     public DbSet<AiActionTemplate> AiActionTemplates => Set<AiActionTemplate>();
+    public DbSet<AiActionRun> AiActionRuns => Set<AiActionRun>();
     public DbSet<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots => Set<DocumentIntelligenceSnapshot>();
     public DbSet<FolderEmbeddingProfile> FolderEmbeddingProfiles => Set<FolderEmbeddingProfile>();
 

@@ -271,6 +271,74 @@ public sealed class OpenAiService : IOpenAiService
         return SendChatCompletionAsync(request, cancellationToken);
     }
 
+
+    public Task<string> RunDocumentActionAsync(
+        string documentContext,
+        string actionType,
+        string outputFormat,
+        string prompt,
+        string? language,
+        CancellationToken cancellationToken)
+    {
+        var safeContext = TrimInput(documentContext, 28_000);
+        var safePrompt = string.IsNullOrWhiteSpace(prompt)
+            ? "Analyze the document and return the most useful result."
+            : prompt.Trim();
+        var safeActionType = string.IsNullOrWhiteSpace(actionType) ? "custom" : actionType.Trim().ToLowerInvariant();
+        var safeOutputFormat = string.IsNullOrWhiteSpace(outputFormat) ? "markdown" : outputFormat.Trim().ToLowerInvariant();
+        var languageInstruction = BuildLanguageInstruction(language, safePrompt);
+
+        var developerOutputInstruction = safeOutputFormat switch
+        {
+            "json" => "Return ONLY valid JSON. Do not wrap it in markdown. Use keys that match the user's requested fields when possible.",
+            "markdown" => "Return clean Markdown only. Use headings, bullet lists, and tables when helpful. Do not wrap the answer in a code block.",
+            "pdf" => "Return clean Markdown for a professional PDF report. Use headings, short sections, bullet lists, and tables when helpful. Do not mention that the backend will render the PDF.",
+            "html" => "Return a clean HTML fragment only. Do not include script tags or external resources.",
+            _ => "Return plain text only. Keep it clear and structured."
+        };
+
+        var messages = new object[]
+        {
+            new
+            {
+                role = "developer",
+                content =
+                    "You execute reusable AI Action Templates for a document assistant. " +
+                    "Use only the provided document context unless the user explicitly asks for general framing. " +
+                    "Do not invent missing facts. If information is missing, say it is missing. " +
+                    "The template instruction is authoritative for what to extract, analyze, summarize, evaluate, or report. " +
+                    developerOutputInstruction + " " +
+                    languageInstruction
+            },
+            new
+            {
+                role = "user",
+                content =
+                    $"ACTION TYPE: {safeActionType}\n" +
+                    $"OUTPUT FORMAT: {safeOutputFormat}\n\n" +
+                    $"TEMPLATE INSTRUCTION:\n{safePrompt}\n\n" +
+                    $"DOCUMENT CONTEXT:\n{safeContext}"
+            }
+        };
+
+        object request = safeOutputFormat == "json"
+            ? new
+            {
+                model = _options.Model,
+                temperature = 0.0,
+                response_format = new { type = "json_object" },
+                messages
+            }
+            : new
+            {
+                model = _options.Model,
+                temperature = 0.15,
+                messages
+            };
+
+        return SendChatCompletionAsync(request, cancellationToken);
+    }
+
     public Task<string> CompareDocumentsAsync(
         string firstDocumentText,
         string secondDocumentText,
