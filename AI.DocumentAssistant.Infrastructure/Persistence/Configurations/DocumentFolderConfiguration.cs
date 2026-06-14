@@ -17,13 +17,20 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Configurations
             builder.Property(x => x.NamePl).HasMaxLength(150).IsRequired();
             builder.Property(x => x.NameEn).HasMaxLength(150).IsRequired();
             builder.Property(x => x.NameUa).HasMaxLength(150).IsRequired();
+            builder.Property(x => x.Visibility).HasConversion<string>().HasMaxLength(40).IsRequired();
 
             builder.HasIndex(x => new { x.UserId, x.ParentFolderId, x.Key }).IsUnique();
+            builder.HasIndex(x => new { x.OrganizationId, x.ParentFolderId, x.Key });
 
             builder.HasOne(x => x.User)
                 .WithMany(x => x.DocumentFolders)
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            builder.HasOne(x => x.Organization)
+                .WithMany(x => x.Folders)
+                .HasForeignKey(x => x.OrganizationId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             builder.HasOne(x => x.ParentFolder)
                 .WithMany(x => x.Children)

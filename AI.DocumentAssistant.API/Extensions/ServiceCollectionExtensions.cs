@@ -1,9 +1,13 @@
 ﻿using AI.DocumentAssistant.Application.Abstractions.Chats;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
+using AI.DocumentAssistant.Application.Abstractions.Organizations;
+using AI.DocumentAssistant.Application.Abstractions.Authorization;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Auth.Services;
 using AI.DocumentAssistant.Application.Chats.Services;
 using AI.DocumentAssistant.Application.Documents.Services;
+using AI.DocumentAssistant.Application.Organizations.Services;
+using AI.DocumentAssistant.Application.Authorization;
 using AI.DocumentAssistant.Application.Services.DocumentProcessing;
 using AI.DocumentAssistant.Application.Usage.Services;
 
@@ -14,6 +18,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
         services.AddScoped<AuthService>();
+        services.AddScoped<IPermissionService, PermissionService>();
+        services.AddScoped<IOrganizationService, OrganizationService>();
 
         services.AddScoped<IDocumentService, DocumentService>();
         services.AddScoped<IDocumentFolderService, DocumentFolderService>();

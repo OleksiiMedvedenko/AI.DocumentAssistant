@@ -36,4 +36,9 @@ public sealed class User
     public ICollection<AiActionRun> AiActionRuns { get; set; } = new List<AiActionRun>();
     public ICollection<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots { get; set; } = new List<DocumentIntelligenceSnapshot>();
     public ICollection<FolderEmbeddingProfile> FolderEmbeddingProfiles { get; set; } = new List<FolderEmbeddingProfile>();
+    public ICollection<Organization> OwnedOrganizations { get; set; } = new List<Organization>();
+    public ICollection<OrganizationMember> OrganizationMemberships { get; set; } = new List<OrganizationMember>();
+    public ICollection<OrganizationInvitation> SentOrganizationInvitations { get; set; } = new List<OrganizationInvitation>();
+    public ICollection<AccessGrant> AccessGrants { get; set; } = new List<AccessGrant>();
+    public ICollection<AuditLog> AuditLogs { get; set; } = new List<AuditLog>();
 }

@@ -6,6 +6,9 @@ namespace AI.DocumentAssistant.Application.Documents.Dtos
     {
         public IFormFile File { get; set; } = default!;
         public Guid? FolderId { get; set; }
+        public Guid? OrganizationId { get; set; }
+
+        public string? Visibility { get; set; }
 
         public bool SmartOrganize { get; set; } = true;
 

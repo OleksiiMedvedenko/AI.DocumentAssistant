@@ -4,6 +4,9 @@
     {
         public Guid Id { get; set; }
         public Guid? ParentFolderId { get; set; }
+        public Guid? OrganizationId { get; set; }
+        public string Visibility { get; set; } = default!;
+        public bool InheritPermissions { get; set; }
 
         public string Key { get; set; } = default!;
         public string Name { get; set; } = default!;

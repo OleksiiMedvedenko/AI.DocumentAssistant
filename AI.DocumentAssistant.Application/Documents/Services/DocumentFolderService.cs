@@ -1,8 +1,11 @@
 ﻿using AI.DocumentAssistant.Application.Abstractions.Common;
+using AI.DocumentAssistant.Application.Abstractions.Authorization;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Application.Documents.Dtos;
 using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Domain.Enums;
+using AI.DocumentAssistant.Application.Authorization;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using System.Text.RegularExpressions;
@@ -14,28 +17,43 @@ namespace AI.DocumentAssistant.Application.Documents.Services
         private readonly AppDbContext _dbContext;
         private readonly ICurrentUserService _currentUserService;
         private readonly IDocumentIntelligenceService _documentIntelligenceService;
+        private readonly IPermissionService _permissionService;
 
         public DocumentFolderService(
             AppDbContext dbContext,
             ICurrentUserService currentUserService,
-            IDocumentIntelligenceService documentIntelligenceService)
+            IDocumentIntelligenceService documentIntelligenceService,
+            IPermissionService permissionService)
         {
             _dbContext = dbContext;
             _currentUserService = currentUserService;
             _documentIntelligenceService = documentIntelligenceService;
+            _permissionService = permissionService;
         }
 
-        public async Task<List<DocumentFolderDto>> GetTreeAsync(CancellationToken cancellationToken)
+        public async Task<List<DocumentFolderDto>> GetTreeAsync(Guid? organizationId, CancellationToken cancellationToken)
         {
             var userId = _currentUserService.GetUserId();
 
-            var folders = await _dbContext.DocumentFolders
-                .Where(x => x.UserId == userId)
+            IQueryable<DocumentFolder> folderQuery = _dbContext.DocumentFolders;
+
+            if (organizationId.HasValue)
+            {
+                await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.FoldersView, organizationId: organizationId.Value, cancellationToken: cancellationToken);
+                folderQuery = folderQuery.Where(x => x.OrganizationId == organizationId.Value && (x.Visibility == DocumentVisibility.Organization || x.UserId == userId));
+            }
+            else
+            {
+                folderQuery = folderQuery.Where(x => x.UserId == userId && x.OrganizationId == null);
+            }
+
+            var folders = await folderQuery
                 .OrderBy(x => x.Name)
                 .ToListAsync(cancellationToken);
 
+            var folderIds = folders.Select(x => x.Id).ToArray();
             var documentCounts = await _dbContext.Documents
-                .Where(x => x.UserId == userId && x.FolderId != null)
+                .Where(x => x.FolderId != null && folderIds.Contains(x.FolderId.Value))
                 .GroupBy(x => x.FolderId!.Value)
                 .Select(x => new { FolderId = x.Key, Count = x.Count() })
                 .ToDictionaryAsync(x => x.FolderId, x => x.Count, cancellationToken);
@@ -46,6 +64,9 @@ namespace AI.DocumentAssistant.Application.Documents.Services
                 {
                     Id = x.Id,
                     ParentFolderId = x.ParentFolderId,
+                    OrganizationId = x.OrganizationId,
+                    Visibility = x.Visibility.ToString(),
+                    InheritPermissions = x.InheritPermissions,
                     Key = x.Key,
                     Name = x.Name,
                     NamePl = x.NamePl,
@@ -69,8 +90,14 @@ namespace AI.DocumentAssistant.Application.Documents.Services
         public async Task<DocumentFolderDto> CreateAsync(CreateDocumentFolderRequestDto request, CancellationToken cancellationToken)
         {
             var userId = _currentUserService.GetUserId();
+            var visibility = ResolveVisibility(request.Visibility, request.OrganizationId);
 
-            await EnsureParentBelongsToUserAsync(userId, request.ParentFolderId, cancellationToken);
+            if (request.OrganizationId.HasValue)
+            {
+                await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.FoldersCreate, organizationId: request.OrganizationId.Value, cancellationToken: cancellationToken);
+            }
+
+            await EnsureParentBelongsToScopeAsync(userId, request.OrganizationId, request.ParentFolderId, cancellationToken);
 
             var name = NormalizeRequired(request.Name, "Folder name");
             var namePl = NormalizeRequired(request.NamePl, "Folder name (pl)");
@@ -79,7 +106,7 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             var key = Slugify(nameEn);
 
             var exists = await _dbContext.DocumentFolders.AnyAsync(
-                x => x.UserId == userId &&
+                x => (x.UserId == userId || (request.OrganizationId.HasValue && x.OrganizationId == request.OrganizationId.Value)) &&
                      x.ParentFolderId == request.ParentFolderId &&
                      x.Key == key,
                 cancellationToken);
@@ -93,6 +120,8 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             {
                 Id = Guid.NewGuid(),
                 UserId = userId,
+                OrganizationId = request.OrganizationId,
+                Visibility = visibility,
                 ParentFolderId = request.ParentFolderId,
                 Key = key,
                 Name = name,
@@ -199,8 +228,19 @@ namespace AI.DocumentAssistant.Application.Documents.Services
         {
             var userId = _currentUserService.GetUserId();
 
-            var folders = await _dbContext.DocumentFolders
-                .Where(x => x.UserId == userId)
+            IQueryable<DocumentFolder> folderQuery = _dbContext.DocumentFolders;
+
+            if (organizationId.HasValue)
+            {
+                await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.FoldersView, organizationId: organizationId.Value, cancellationToken: cancellationToken);
+                folderQuery = folderQuery.Where(x => x.OrganizationId == organizationId.Value && (x.Visibility == DocumentVisibility.Organization || x.UserId == userId));
+            }
+            else
+            {
+                folderQuery = folderQuery.Where(x => x.UserId == userId && x.OrganizationId == null);
+            }
+
+            var folders = await folderQuery
                 .OrderBy(x => x.Name)
                 .ToListAsync(cancellationToken);
 
@@ -352,7 +392,7 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             };
         }
 
-        private async Task EnsureParentBelongsToUserAsync(Guid userId, Guid? parentFolderId, CancellationToken cancellationToken)
+        private async Task EnsureParentBelongsToScopeAsync(Guid userId, Guid? organizationId, Guid? parentFolderId, CancellationToken cancellationToken)
         {
             if (parentFolderId is null)
             {
@@ -360,13 +400,33 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             }
 
             var exists = await _dbContext.DocumentFolders.AnyAsync(
-                x => x.Id == parentFolderId && x.UserId == userId,
+                x => x.Id == parentFolderId && (x.UserId == userId || (organizationId.HasValue && x.OrganizationId == organizationId.Value)),
                 cancellationToken);
 
             if (!exists)
             {
                 throw new BadRequestException("Parent folder was not found.");
             }
+        }
+
+        private static DocumentVisibility ResolveVisibility(string? visibility, Guid? organizationId)
+        {
+            if (string.IsNullOrWhiteSpace(visibility))
+            {
+                return organizationId.HasValue ? DocumentVisibility.Organization : DocumentVisibility.Private;
+            }
+
+            if (!Enum.TryParse<DocumentVisibility>(visibility, true, out var parsed))
+            {
+                throw new BadRequestException("Unsupported folder visibility.");
+            }
+
+            if (!organizationId.HasValue && parsed != DocumentVisibility.Private)
+            {
+                throw new BadRequestException("Only private visibility can be used outside an organization.");
+            }
+
+            return parsed;
         }
 
         private static string NormalizeRequired(string? value, string fieldName)
@@ -448,6 +508,9 @@ namespace AI.DocumentAssistant.Application.Documents.Services
             {
                 Id = folder.Id,
                 ParentFolderId = folder.ParentFolderId,
+                OrganizationId = folder.OrganizationId,
+                Visibility = folder.Visibility.ToString(),
+                InheritPermissions = folder.InheritPermissions,
                 Key = folder.Key,
                 Name = folder.Name,
                 NamePl = folder.NamePl,

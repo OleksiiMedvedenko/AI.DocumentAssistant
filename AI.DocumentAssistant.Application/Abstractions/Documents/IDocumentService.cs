@@ -10,7 +10,7 @@ public interface IDocumentService
         UploadDocumentsRequestDto request,
         CancellationToken cancellationToken);
 
-    Task<List<DocumentDto>> GetAllAsync(Guid? folderId, CancellationToken cancellationToken);
+    Task<List<DocumentDto>> GetAllAsync(Guid? folderId, Guid? organizationId, CancellationToken cancellationToken);
     Task<List<DocumentDto>> GetInboxAsync(CancellationToken cancellationToken);
     Task<DocumentDashboardDto> GetDashboardAsync(CancellationToken cancellationToken);
     Task<List<DocumentFolderSuggestionResponseDto>> GetFolderSuggestionsAsync(Guid documentId, CancellationToken cancellationToken);

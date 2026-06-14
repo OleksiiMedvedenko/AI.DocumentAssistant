@@ -19,9 +19,9 @@ namespace AI.DocumentAssistant.API.Controllers
         }
 
         [HttpGet("tree")]
-        public async Task<IActionResult> GetTree(CancellationToken cancellationToken)
+        public async Task<IActionResult> GetTree([FromQuery] Guid? organizationId, CancellationToken cancellationToken)
         {
-            return Ok(await _documentFolderService.GetTreeAsync(cancellationToken));
+            return Ok(await _documentFolderService.GetTreeAsync(organizationId, cancellationToken));
         }
 
         [HttpGet("duplicate-suggestions")]
@@ -37,6 +37,8 @@ namespace AI.DocumentAssistant.API.Controllers
                 new CreateDocumentFolderRequestDto
                 {
                     ParentFolderId = request.ParentFolderId,
+                    OrganizationId = request.OrganizationId,
+                    Visibility = request.Visibility,
                     Name = request.Name,
                     NamePl = request.NamePl,
                     NameEn = request.NameEn,

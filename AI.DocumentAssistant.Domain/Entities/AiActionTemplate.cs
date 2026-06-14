@@ -1,9 +1,13 @@
+using AI.DocumentAssistant.Domain.Enums;
+
 namespace AI.DocumentAssistant.Domain.Entities;
 
 public sealed class AiActionTemplate
 {
     public Guid Id { get; set; }
     public Guid UserId { get; set; }
+    public Guid? OrganizationId { get; set; }
+    public DocumentVisibility Visibility { get; set; } = DocumentVisibility.Private;
     public Guid? FolderId { get; set; }
     public string Name { get; set; } = default!;
     public string? Description { get; set; }
@@ -17,6 +21,7 @@ public sealed class AiActionTemplate
     public DateTime? UpdatedAtUtc { get; set; }
 
     public User User { get; set; } = default!;
+    public Organization? Organization { get; set; }
     public DocumentFolder? Folder { get; set; }
     public ICollection<AiActionRun> Runs { get; set; } = new List<AiActionRun>();
 }

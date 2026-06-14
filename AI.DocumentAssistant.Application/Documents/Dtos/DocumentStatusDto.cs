@@ -8,6 +8,8 @@ public sealed class DocumentStatusDto
     public string OriginalFileName { get; set; } = default!;
     public DocumentStatus Status { get; set; }
     public DateTime UploadedAtUtc { get; set; }
+    public Guid? OrganizationId { get; set; }
+    public DocumentVisibility Visibility { get; set; }
     public DateTime? ProcessedAtUtc { get; set; }
     public string? ErrorMessage { get; set; }
 }

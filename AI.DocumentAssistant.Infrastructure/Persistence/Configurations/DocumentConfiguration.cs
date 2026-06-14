@@ -34,6 +34,11 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Configurations
             builder.Property(x => x.OrganizationMode)
                 .IsRequired();
 
+            builder.Property(x => x.Visibility)
+                .HasConversion<string>()
+                .HasMaxLength(40)
+                .IsRequired();
+
             builder.Property(x => x.FolderClassificationStatus)
                 .HasMaxLength(50);
 
@@ -48,6 +53,11 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Configurations
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            builder.HasOne(x => x.Organization)
+                .WithMany(x => x.Documents)
+                .HasForeignKey(x => x.OrganizationId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             builder.HasOne(x => x.Folder)
                 .WithMany(x => x.Documents)
                 .HasForeignKey(x => x.FolderId)
@@ -55,6 +65,7 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Configurations
 
             builder.HasIndex(x => new { x.UserId, x.FolderId, x.UploadedAtUtc });
             builder.HasIndex(x => new { x.UserId, x.OrganizationMode, x.UploadedAtUtc });
+            builder.HasIndex(x => new { x.OrganizationId, x.Visibility, x.UploadedAtUtc });
         }
     }
 }

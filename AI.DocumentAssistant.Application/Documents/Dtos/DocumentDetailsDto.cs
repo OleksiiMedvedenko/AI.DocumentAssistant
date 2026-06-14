@@ -11,6 +11,9 @@ namespace AI.DocumentAssistant.Application.Documents.Dtos
         public DocumentStatus Status { get; set; }
         public string? Summary { get; set; }
         public DateTime UploadedAtUtc { get; set; }
+
+        public Guid? OrganizationId { get; set; }
+        public DocumentVisibility Visibility { get; set; }
         public DateTime? ProcessedAtUtc { get; set; }
         public string? ErrorMessage { get; set; }
 

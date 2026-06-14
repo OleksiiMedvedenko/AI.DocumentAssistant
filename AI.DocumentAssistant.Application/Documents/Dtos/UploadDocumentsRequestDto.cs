@@ -6,6 +6,9 @@ public sealed class UploadDocumentsRequestDto
 {
     public List<IFormFile> Files { get; set; } = [];
     public Guid? FolderId { get; set; }
-    public bool SmartOrganize { get; set; } = true;
+        public Guid? OrganizationId { get; set; }
+    public string? Visibility { get; set; }
+
+        public bool SmartOrganize { get; set; } = true;
     public bool AllowSystemFolderCreation { get; set; } = true;
 }

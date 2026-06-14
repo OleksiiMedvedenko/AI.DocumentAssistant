@@ -1,11 +1,12 @@
 using AI.DocumentAssistant.Application.Abstractions.AI;
 using AI.DocumentAssistant.Application.Abstractions.Common;
+using AI.DocumentAssistant.Application.Abstractions.Authorization;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Application.Documents.Dtos;
-using AI.DocumentAssistant.Application.Services.Authentication;
 using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Application.Authorization;
 using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Http;
@@ -33,6 +34,7 @@ public sealed class DocumentService : IDocumentService
     private readonly IDocumentFolderClassifier _documentFolderClassifier;
     private readonly IDocumentFolderDecisionEngine _documentFolderDecisionEngine;
     private readonly IDocumentIntelligenceService _documentIntelligenceService;
+    private readonly IPermissionService _permissionService;
 
     public DocumentService(
         AppDbContext dbContext,
@@ -45,7 +47,8 @@ public sealed class DocumentService : IDocumentService
         IDocumentPreviewConverter documentPreviewConverter,
         IDocumentFolderClassifier documentFolderClassifier,
         IDocumentFolderDecisionEngine documentFolderDecisionEngine,
-        IDocumentIntelligenceService documentIntelligenceService)
+        IDocumentIntelligenceService documentIntelligenceService,
+        IPermissionService permissionService)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
@@ -58,6 +61,7 @@ public sealed class DocumentService : IDocumentService
         _documentFolderClassifier = documentFolderClassifier;
         _documentFolderDecisionEngine = documentFolderDecisionEngine;
         _documentIntelligenceService = documentIntelligenceService;
+        _permissionService = permissionService;
     }
 
     public async Task<DocumentDto> UploadAsync(UploadDocumentRequestDto request, CancellationToken cancellationToken)
@@ -80,11 +84,22 @@ public sealed class DocumentService : IDocumentService
         }
 
         var userId = _currentUserService.GetUserId();
+        var visibility = ResolveVisibility(request.Visibility, request.OrganizationId);
+
+        if (request.OrganizationId.HasValue)
+        {
+            await _permissionService.EnsurePermissionAsync(
+                userId,
+                PermissionKeys.DocumentsUpload,
+                organizationId: request.OrganizationId.Value,
+                cancellationToken: cancellationToken);
+        }
 
         if (request.FolderId is not null)
         {
             var folderExists = await _dbContext.DocumentFolders.AnyAsync(
-                x => x.Id == request.FolderId && x.UserId == userId,
+                x => x.Id == request.FolderId &&
+                     (x.UserId == userId || (request.OrganizationId.HasValue && x.OrganizationId == request.OrganizationId.Value)),
                 cancellationToken);
 
             if (!folderExists)
@@ -114,6 +129,8 @@ public sealed class DocumentService : IDocumentService
             {
                 Id = Guid.NewGuid(),
                 UserId = userId,
+                OrganizationId = request.OrganizationId,
+                Visibility = visibility,
                 FolderId = request.FolderId,
                 FileName = fileName,
                 OriginalFileName = file.FileName,
@@ -161,6 +178,8 @@ public sealed class DocumentService : IDocumentService
                     SizeInBytes = x.SizeInBytes,
                     Status = x.Status,
                     UploadedAtUtc = x.UploadedAtUtc,
+                    OrganizationId = x.OrganizationId,
+                    Visibility = x.Visibility,
                     FolderId = x.FolderId,
                     FolderName = x.Folder != null ? x.Folder.Name : null,
                     FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
@@ -211,6 +230,8 @@ public sealed class DocumentService : IDocumentService
                 {
                     File = file,
                     FolderId = request.FolderId,
+                    OrganizationId = request.OrganizationId,
+                    Visibility = request.Visibility,
                     SmartOrganize = request.SmartOrganize,
                     AllowSystemFolderCreation = request.AllowSystemFolderCreation
                 },
@@ -220,6 +241,26 @@ public sealed class DocumentService : IDocumentService
         }
 
         return result;
+    }
+
+    private static DocumentVisibility ResolveVisibility(string? visibility, Guid? organizationId)
+    {
+        if (string.IsNullOrWhiteSpace(visibility))
+        {
+            return organizationId.HasValue ? DocumentVisibility.Organization : DocumentVisibility.Private;
+        }
+
+        if (!Enum.TryParse<DocumentVisibility>(visibility, true, out var parsed))
+        {
+            throw new BadRequestException("Unsupported document visibility.");
+        }
+
+        if (!organizationId.HasValue && parsed != DocumentVisibility.Private)
+        {
+            throw new BadRequestException("Only private visibility can be used outside an organization.");
+        }
+
+        return parsed;
     }
 
     private static DocumentOrganizationMode ResolveOrganizationMode(UploadDocumentRequestDto request)
@@ -261,11 +302,27 @@ public sealed class DocumentService : IDocumentService
             : "smart_folder.disabled";
     }
 
-    public async Task<List<DocumentDto>> GetAllAsync(Guid? folderId, CancellationToken cancellationToken)
+    public async Task<List<DocumentDto>> GetAllAsync(Guid? folderId, Guid? organizationId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
 
-        var query = _dbContext.Documents.Where(x => x.UserId == userId);
+        var query = _dbContext.Documents.AsQueryable();
+
+        if (organizationId.HasValue)
+        {
+            await _permissionService.EnsurePermissionAsync(
+                userId,
+                PermissionKeys.DocumentsView,
+                organizationId: organizationId.Value,
+                cancellationToken: cancellationToken);
+
+            query = query.Where(x => x.OrganizationId == organizationId.Value &&
+                (x.Visibility == DocumentVisibility.Organization || x.UserId == userId));
+        }
+        else
+        {
+            query = query.Where(x => x.UserId == userId && x.OrganizationId == null);
+        }
 
         if (folderId.HasValue)
         {
@@ -282,6 +339,8 @@ public sealed class DocumentService : IDocumentService
                 SizeInBytes = x.SizeInBytes,
                 Status = x.Status,
                 UploadedAtUtc = x.UploadedAtUtc,
+                OrganizationId = x.OrganizationId,
+                Visibility = x.Visibility,
                 FolderId = x.FolderId,
                 FolderName = x.Folder != null ? x.Folder.Name : null,
                 FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
@@ -302,7 +361,7 @@ public sealed class DocumentService : IDocumentService
         var userId = _currentUserService.GetUserId();
 
         return await _dbContext.Documents
-            .Where(x => x.UserId == userId && (x.IsNew || x.FolderId == null || x.FolderClassificationStatus == "suggested"))
+            .Where(x => x.UserId == userId && x.OrganizationId == null && (x.IsNew || x.FolderId == null || x.FolderClassificationStatus == "suggested"))
             .OrderByDescending(x => x.UploadedAtUtc)
             .Select(x => new DocumentDto
             {
@@ -334,7 +393,7 @@ public sealed class DocumentService : IDocumentService
 
         var documents = await _dbContext.Documents
             .Include(x => x.Folder)
-            .Where(x => x.UserId == userId)
+            .Where(x => x.UserId == userId && x.OrganizationId == null)
             .OrderByDescending(x => x.UploadedAtUtc)
             .ToListAsync(cancellationToken);
 
@@ -520,9 +579,10 @@ public sealed class DocumentService : IDocumentService
     public async Task<DocumentDto> AcceptFolderSuggestionAsync(Guid documentId, Guid suggestionId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
+        await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.DocumentsView, AccessResourceType.Document, documentId, cancellationToken: cancellationToken);
 
         var document = await _dbContext.Documents
-            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == documentId, cancellationToken);
 
         if (document is null)
         {
@@ -787,9 +847,10 @@ public sealed class DocumentService : IDocumentService
     public async Task<DocumentDetailsDto> GetByIdAsync(Guid documentId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
+        await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.DocumentsView, AccessResourceType.Document, documentId, cancellationToken: cancellationToken);
 
         var document = await _dbContext.Documents
-            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Where(x => x.Id == documentId)
             .Select(x => new DocumentDetailsDto
             {
                 Id = x.Id,
@@ -799,6 +860,8 @@ public sealed class DocumentService : IDocumentService
                 Status = x.Status,
                 Summary = x.Summary,
                 UploadedAtUtc = x.UploadedAtUtc,
+                OrganizationId = x.OrganizationId,
+                Visibility = x.Visibility,
                 ProcessedAtUtc = x.ProcessedAtUtc,
                 ErrorMessage = x.ErrorMessage,
                 FolderId = x.FolderId,
@@ -820,15 +883,18 @@ public sealed class DocumentService : IDocumentService
     public async Task<DocumentStatusDto> GetStatusAsync(Guid documentId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
+        await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.DocumentsView, AccessResourceType.Document, documentId, cancellationToken: cancellationToken);
 
         var document = await _dbContext.Documents
-            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Where(x => x.Id == documentId)
             .Select(x => new DocumentStatusDto
             {
                 Id = x.Id,
                 OriginalFileName = x.OriginalFileName,
                 Status = x.Status,
                 UploadedAtUtc = x.UploadedAtUtc,
+                OrganizationId = x.OrganizationId,
+                Visibility = x.Visibility,
                 ProcessedAtUtc = x.ProcessedAtUtc,
                 ErrorMessage = x.ErrorMessage
             })
@@ -883,6 +949,8 @@ public sealed class DocumentService : IDocumentService
                 SizeInBytes = x.SizeInBytes,
                 Status = x.Status,
                 UploadedAtUtc = x.UploadedAtUtc,
+                OrganizationId = x.OrganizationId,
+                Visibility = x.Visibility,
                 FolderId = x.FolderId,
                 FolderName = x.Folder != null ? x.Folder.Name : null,
                 FolderNamePl = x.Folder != null ? x.Folder.NamePl : null,
@@ -902,9 +970,10 @@ public sealed class DocumentService : IDocumentService
     public async Task<DocumentDto> MoveToFolderAsync(Guid documentId, MoveDocumentToFolderRequestDto request, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
+        await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.DocumentsEdit, AccessResourceType.Document, documentId, cancellationToken: cancellationToken);
 
         var document = await _dbContext.Documents
-            .FirstOrDefaultAsync(x => x.Id == documentId && x.UserId == userId, cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == documentId, cancellationToken);
 
         if (document is null)
         {
@@ -914,7 +983,8 @@ public sealed class DocumentService : IDocumentService
         if (request.FolderId is not null)
         {
             var folderExists = await _dbContext.DocumentFolders.AnyAsync(
-                x => x.Id == request.FolderId && x.UserId == userId,
+                x => x.Id == request.FolderId &&
+                     (x.UserId == userId || (document.OrganizationId.HasValue && x.OrganizationId == document.OrganizationId.Value)),
                 cancellationToken);
 
             if (!folderExists)
@@ -1279,9 +1349,10 @@ public sealed class DocumentService : IDocumentService
     public async Task<DocumentPreviewMetaDto> GetPreviewMetaAsync(Guid documentId, CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
+        await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.DocumentsView, AccessResourceType.Document, documentId, cancellationToken: cancellationToken);
 
         var document = await _dbContext.Documents
-            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Where(x => x.Id == documentId)
             .Select(x => new
             {
                 x.Id,
@@ -1363,9 +1434,10 @@ public sealed class DocumentService : IDocumentService
     CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
+        await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.DocumentsExport, AccessResourceType.Document, documentId, cancellationToken: cancellationToken);
 
         var document = await _dbContext.Documents
-            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Where(x => x.Id == documentId)
             .Select(x => new
             {
                 x.StoragePath,
@@ -1393,9 +1465,10 @@ public sealed class DocumentService : IDocumentService
         CancellationToken cancellationToken)
     {
         var userId = _currentUserService.GetUserId();
+        await _permissionService.EnsurePermissionAsync(userId, PermissionKeys.DocumentsExport, AccessResourceType.Document, documentId, cancellationToken: cancellationToken);
 
         var document = await _dbContext.Documents
-            .Where(x => x.Id == documentId && x.UserId == userId)
+            .Where(x => x.Id == documentId)
             .Select(x => new
             {
                 x.StoragePath,
@@ -1568,6 +1641,8 @@ public sealed class DocumentService : IDocumentService
             SizeInBytes = document.SizeInBytes,
             Status = document.Status,
             UploadedAtUtc = document.UploadedAtUtc,
+            OrganizationId = document.OrganizationId,
+            Visibility = document.Visibility,
             FolderId = document.FolderId,
             FolderName = document.Folder?.Name,
             FolderNamePl = document.Folder?.NamePl,

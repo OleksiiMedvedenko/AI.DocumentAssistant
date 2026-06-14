@@ -26,6 +26,8 @@ public sealed class DocumentsController : ControllerBase
             {
                 File = request.File,
                 FolderId = request.FolderId,
+                OrganizationId = request.OrganizationId,
+                Visibility = request.Visibility,
                 SmartOrganize = request.SmartOrganize,
                 AllowSystemFolderCreation = request.AllowSystemFolderCreation
             },
@@ -45,6 +47,8 @@ public sealed class DocumentsController : ControllerBase
             {
                 Files = request.Files,
                 FolderId = request.FolderId,
+                OrganizationId = request.OrganizationId,
+                Visibility = request.Visibility,
                 SmartOrganize = request.SmartOrganize,
                 AllowSystemFolderCreation = request.AllowSystemFolderCreation
             },
@@ -54,9 +58,9 @@ public sealed class DocumentsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] Guid? folderId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetAll([FromQuery] Guid? folderId, [FromQuery] Guid? organizationId, CancellationToken cancellationToken)
     {
-        return Ok(await _documentService.GetAllAsync(folderId, cancellationToken));
+        return Ok(await _documentService.GetAllAsync(folderId, organizationId, cancellationToken));
     }
 
     [HttpGet("inbox")]

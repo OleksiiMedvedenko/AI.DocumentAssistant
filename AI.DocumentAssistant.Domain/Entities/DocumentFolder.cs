@@ -1,9 +1,14 @@
-﻿namespace AI.DocumentAssistant.Domain.Entities
+using AI.DocumentAssistant.Domain.Enums;
+
+namespace AI.DocumentAssistant.Domain.Entities
 {
     public sealed class DocumentFolder
     {
         public Guid Id { get; set; }
         public Guid UserId { get; set; }
+        public Guid? OrganizationId { get; set; }
+        public DocumentVisibility Visibility { get; set; } = DocumentVisibility.Private;
+        public bool InheritPermissions { get; set; } = true;
         public Guid? ParentFolderId { get; set; }
 
         public string Key { get; set; } = default!;
@@ -16,6 +21,7 @@
         public DateTime CreatedAtUtc { get; set; }
 
         public User User { get; set; } = default!;
+        public Organization? Organization { get; set; }
         public DocumentFolder? ParentFolder { get; set; }
         public FolderEmbeddingProfile? EmbeddingProfile { get; set; }
 

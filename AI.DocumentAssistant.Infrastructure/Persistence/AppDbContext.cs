@@ -26,6 +26,17 @@ public sealed class AppDbContext : DbContext, IApplicationDbContext
     public DbSet<AiActionRun> AiActionRuns => Set<AiActionRun>();
     public DbSet<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots => Set<DocumentIntelligenceSnapshot>();
     public DbSet<FolderEmbeddingProfile> FolderEmbeddingProfiles => Set<FolderEmbeddingProfile>();
+    public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<OrganizationMember> OrganizationMembers => Set<OrganizationMember>();
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
+    public DbSet<Role> Roles => Set<Role>();
+    public DbSet<Permission> Permissions => Set<Permission>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<OrganizationMemberRole> OrganizationMemberRoles => Set<OrganizationMemberRole>();
+    public DbSet<Team> Teams => Set<Team>();
+    public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
+    public DbSet<AccessGrant> AccessGrants => Set<AccessGrant>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

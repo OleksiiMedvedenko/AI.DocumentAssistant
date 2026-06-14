@@ -17,13 +17,20 @@ public sealed class AiActionTemplateConfiguration : IEntityTypeConfiguration<AiA
         builder.Property(x => x.Prompt).HasColumnType("nvarchar(max)").IsRequired();
         builder.Property(x => x.OutputFormat).HasMaxLength(50).IsRequired();
         builder.Property(x => x.Language).HasMaxLength(20);
+        builder.Property(x => x.Visibility).HasConversion<string>().HasMaxLength(40).IsRequired();
         builder.HasIndex(x => new { x.UserId, x.DocumentType, x.Name });
         builder.HasIndex(x => new { x.UserId, x.FolderId });
+        builder.HasIndex(x => new { x.OrganizationId, x.Visibility, x.DocumentType, x.Name });
 
         builder.HasOne(x => x.User)
             .WithMany(x => x.AiActionTemplates)
             .HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.Organization)
+            .WithMany()
+            .HasForeignKey(x => x.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(x => x.Folder)
             .WithMany(x => x.AiActionTemplates)

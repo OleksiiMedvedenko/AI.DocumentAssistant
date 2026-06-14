@@ -15,6 +15,17 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Abstractions
         DbSet<ExtractedData> ExtractedData { get; }
         DbSet<UserUsageRecord> UserUsageRecords { get; }
         DbSet<UserQuotaOverride> UserQuotaOverrides { get; }
+        DbSet<Organization> Organizations { get; }
+        DbSet<OrganizationMember> OrganizationMembers { get; }
+        DbSet<OrganizationInvitation> OrganizationInvitations { get; }
+        DbSet<Role> Roles { get; }
+        DbSet<Permission> Permissions { get; }
+        DbSet<RolePermission> RolePermissions { get; }
+        DbSet<OrganizationMemberRole> OrganizationMemberRoles { get; }
+        DbSet<Team> Teams { get; }
+        DbSet<TeamMember> TeamMembers { get; }
+        DbSet<AccessGrant> AccessGrants { get; }
+        DbSet<AuditLog> AuditLogs { get; }
 
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }

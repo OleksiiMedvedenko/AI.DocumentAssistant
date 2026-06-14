@@ -6,6 +6,8 @@ namespace AI.DocumentAssistant.Domain.Entities
     {
         public Guid Id { get; set; }
         public Guid UserId { get; set; }
+        public Guid? OrganizationId { get; set; }
+        public DocumentVisibility Visibility { get; set; } = DocumentVisibility.Private;
         public Guid? FolderId { get; set; }
 
         public string FileName { get; set; } = default!;
@@ -41,6 +43,7 @@ namespace AI.DocumentAssistant.Domain.Entities
         public DateTime? FirstOpenedAtUtc { get; set; }
 
         public User User { get; set; } = default!;
+        public Organization? Organization { get; set; }
         public DocumentFolder? Folder { get; set; }
         public DocumentIntelligenceSnapshot? IntelligenceSnapshot { get; set; }
 
