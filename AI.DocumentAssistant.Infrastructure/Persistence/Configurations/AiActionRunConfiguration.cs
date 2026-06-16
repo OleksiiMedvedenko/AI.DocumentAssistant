@@ -15,10 +15,10 @@ public sealed class AiActionRunConfiguration : IEntityTypeConfiguration<AiAction
         builder.Property(x => x.ActionType).HasMaxLength(50).IsRequired();
         builder.Property(x => x.OutputFormat).HasMaxLength(50).IsRequired();
         builder.Property(x => x.Language).HasMaxLength(20);
-        builder.Property(x => x.Prompt).HasColumnType("nvarchar(max)").IsRequired();
+        builder.Property(x => x.Prompt).IsRequired();
         builder.Property(x => x.Status).HasMaxLength(50).IsRequired();
-        builder.Property(x => x.ResultText).HasColumnType("nvarchar(max)");
-        builder.Property(x => x.ResultJson).HasColumnType("nvarchar(max)");
+        builder.Property(x => x.ResultText);
+        builder.Property(x => x.ResultJson);
         builder.Property(x => x.ResultFilePath).HasMaxLength(1000);
         builder.Property(x => x.ResultFileName).HasMaxLength(255);
         builder.Property(x => x.ResultContentType).HasMaxLength(120);

@@ -14,7 +14,7 @@ public sealed class AiActionTemplateConfiguration : IEntityTypeConfiguration<AiA
         builder.Property(x => x.Description).HasMaxLength(500);
         builder.Property(x => x.DocumentType).HasMaxLength(100);
         builder.Property(x => x.ActionType).HasMaxLength(50).IsRequired();
-        builder.Property(x => x.Prompt).HasColumnType("nvarchar(max)").IsRequired();
+        builder.Property(x => x.Prompt).IsRequired();
         builder.Property(x => x.OutputFormat).HasMaxLength(50).IsRequired();
         builder.Property(x => x.Language).HasMaxLength(20);
         builder.HasIndex(x => new { x.UserId, x.DocumentType, x.Name });

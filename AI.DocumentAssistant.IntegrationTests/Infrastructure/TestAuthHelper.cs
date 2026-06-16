@@ -1,5 +1,6 @@
 ﻿using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using AI.DocumentAssistant.Domain.Enums;
 using AI.DocumentAssistant.Infrastructure.Persistence;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +44,71 @@ public static class TestAuthHelper
         auth.RefreshToken.Should().NotBeNullOrWhiteSpace();
 
         return auth.AccessToken;
+    }
+
+
+    public static async Task<string> RegisterAndLoginWithRoleAsync(
+        CustomWebApplicationFactory factory,
+        HttpClient client,
+        UserRole role,
+        string? email = null)
+    {
+        email ??= CreateUniqueEmail(role.ToString().ToLowerInvariant());
+
+        await RegisterAsync(client, email, DefaultPassword);
+        await ConfirmUserEmailAsync(factory, email);
+        await SetUserRoleAsync(factory, email, role);
+
+        var loginResponse = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = email,
+            Password = DefaultPassword
+        });
+
+        if (!loginResponse.IsSuccessStatusCode)
+        {
+            var errorBody = await loginResponse.Content.ReadAsStringAsync();
+
+            throw new HttpRequestException(
+                $"Login failed for '{email}' with status {(int)loginResponse.StatusCode} ({loginResponse.StatusCode}). Body: {errorBody}");
+        }
+
+        var auth = await loginResponse.Content.ReadFromJsonAsync<AuthResponse>();
+
+        auth.Should().NotBeNull();
+        auth!.AccessToken.Should().NotBeNullOrWhiteSpace();
+
+        return auth.AccessToken;
+    }
+
+    public static async Task SetUserRoleAsync(
+        CustomWebApplicationFactory factory,
+        string email,
+        UserRole role)
+    {
+        using var scope = factory.Services.CreateScope();
+
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var user = await db.Users.SingleAsync(x => x.Email == normalizedEmail);
+
+        user.Role = role;
+        await db.SaveChangesAsync();
+    }
+
+    public static async Task<Guid> GetUserIdByEmailAsync(
+        CustomWebApplicationFactory factory,
+        string email)
+    {
+        using var scope = factory.Services.CreateScope();
+
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+
+        return await db.Users
+            .Where(x => x.Email == normalizedEmail)
+            .Select(x => x.Id)
+            .SingleAsync();
     }
 
     public static async Task RegisterAsync(
