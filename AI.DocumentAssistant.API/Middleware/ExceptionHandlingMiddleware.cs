@@ -39,6 +39,7 @@ public sealed class ExceptionHandlingMiddleware
             UnauthorizedException => (int)HttpStatusCode.Unauthorized,
             ForbiddenException => (int)HttpStatusCode.Forbidden,
             NotFoundException => (int)HttpStatusCode.NotFound,
+            ConflictException => (int)HttpStatusCode.Conflict,
             QuotaExceededException => StatusCodes.Status429TooManyRequests,
             ServiceUnavailableException => (int)HttpStatusCode.ServiceUnavailable,
             _ => (int)HttpStatusCode.InternalServerError

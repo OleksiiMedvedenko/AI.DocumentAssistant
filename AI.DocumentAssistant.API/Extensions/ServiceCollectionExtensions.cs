@@ -1,9 +1,15 @@
-﻿using AI.DocumentAssistant.Application.Abstractions.Chats;
+using AI.DocumentAssistant.Application.Abstractions.Chats;
+using AI.DocumentAssistant.Application.Abstractions.Communication;
 using AI.DocumentAssistant.Application.Abstractions.Documents;
+using AI.DocumentAssistant.Application.Abstractions.Organizations;
+using AI.DocumentAssistant.Application.Abstractions.Notifications;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
 using AI.DocumentAssistant.Application.Auth.Services;
 using AI.DocumentAssistant.Application.Chats.Services;
 using AI.DocumentAssistant.Application.Documents.Services;
+using AI.DocumentAssistant.Application.Organizations.Services;
+using AI.DocumentAssistant.Application.Notifications.Services;
+using AI.DocumentAssistant.Application.Services.Communication;
 using AI.DocumentAssistant.Application.Services.DocumentProcessing;
 using AI.DocumentAssistant.Application.Usage.Services;
 
@@ -16,6 +22,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<AuthService>();
 
         services.AddScoped<IDocumentService, DocumentService>();
+        services.AddScoped<IOrganizationService, OrganizationService>();
+        services.AddScoped<IOrganizationInvitationService, OrganizationInvitationService>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IOrganizationInvitationEmailTemplateService, OrganizationInvitationEmailTemplateService>();
         services.AddScoped<IDocumentFolderService, DocumentFolderService>();
         services.AddScoped<IDocumentFolderClassifier, DocumentFolderClassifier>();
         services.AddScoped<IDocumentIntelligenceService, DocumentIntelligenceService>();

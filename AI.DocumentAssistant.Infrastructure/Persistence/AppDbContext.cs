@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Infrastructure.Persistence.Abstractions;
 using Microsoft.EntityFrameworkCore;
 
@@ -26,6 +26,12 @@ public sealed class AppDbContext : DbContext, IApplicationDbContext
     public DbSet<AiActionRun> AiActionRuns => Set<AiActionRun>();
     public DbSet<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots => Set<DocumentIntelligenceSnapshot>();
     public DbSet<FolderEmbeddingProfile> FolderEmbeddingProfiles => Set<FolderEmbeddingProfile>();
+    public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<OrganizationMember> OrganizationMembers => Set<OrganizationMember>();
+    public DbSet<OrganizationSettings> OrganizationSettings => Set<OrganizationSettings>();
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
+    public DbSet<UserNotification> UserNotifications => Set<UserNotification>();
+    public DbSet<OrganizationActivityLog> OrganizationActivityLogs => Set<OrganizationActivityLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

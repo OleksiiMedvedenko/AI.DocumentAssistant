@@ -1,4 +1,4 @@
-﻿namespace AI.DocumentAssistant.API.Contracts.Auth;
+namespace AI.DocumentAssistant.API.Contracts.Auth;
 
 public sealed class CurrentUserResponse
 {
@@ -7,6 +7,8 @@ public sealed class CurrentUserResponse
     public string Email { get; set; } = default!;
 
     public string? DisplayName { get; set; }
+
+    public string PreferredLanguage { get; set; } = "en";
 
     public string Role { get; set; } = default!;
 

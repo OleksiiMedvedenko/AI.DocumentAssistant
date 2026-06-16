@@ -4,6 +4,7 @@ using AI.DocumentAssistant.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AI.DocumentAssistant.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260615210106_AddOrganizationsAndManagerRole")]
+    partial class AddOrganizationsAndManagerRole
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -679,96 +682,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.ToTable("Organizations", (string)null);
                 });
 
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationActivityLog", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("ActionType")
-                        .HasColumnType("int");
-
-                    b.Property<Guid?>("ActorUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("PayloadJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ActorUserId");
-
-                    b.HasIndex("OrganizationId", "CreatedAtUtc");
-
-                    b.ToTable("OrganizationActivityLogs", (string)null);
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationInvitation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("AcceptedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("CodeHash")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Email")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("InvitedByUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("InvitedUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("RevokedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("RevokedByUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CodeHash")
-                        .IsUnique();
-
-                    b.HasIndex("InvitedByUserId");
-
-                    b.HasIndex("RevokedByUserId");
-
-                    b.HasIndex("InvitedUserId", "Status", "ExpiresAtUtc");
-
-                    b.HasIndex("OrganizationId", "Email", "Status");
-
-                    b.ToTable("OrganizationInvitations", (string)null);
-                });
-
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationMember", b =>
                 {
                     b.Property<Guid>("Id")
@@ -809,34 +722,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.HasIndex("UserId", "IsActive");
 
                     b.ToTable("OrganizationMembers", (string)null);
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationSettings", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("InvitationLifetimeDays")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasDefaultValue(3);
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrganizationId")
-                        .IsUnique();
-
-                    b.ToTable("OrganizationSettings", (string)null);
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.RefreshToken", b =>
@@ -932,13 +817,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("PreferredLanguage")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(5)
-                        .HasColumnType("nvarchar(5)")
-                        .HasDefaultValue("en");
-
                     b.Property<int>("Role")
                         .HasColumnType("int");
 
@@ -994,58 +872,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.HasIndex("UserId", "FolderId", "Pattern");
 
                     b.ToTable("UserFolderRules", (string)null);
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.UserNotification", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("DismissedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("MessageKey")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("PayloadJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTime?>("ReadAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("RelatedInvitationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("RelatedOrganizationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("TitleKey")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RelatedInvitationId");
-
-                    b.HasIndex("RelatedOrganizationId");
-
-                    b.HasIndex("UserId", "DismissedAtUtc", "ReadAtUtc", "CreatedAtUtc");
-
-                    b.ToTable("UserNotifications", (string)null);
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.UserQuotaOverride", b =>
@@ -1356,58 +1182,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Navigation("CreatedByUser");
                 });
 
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationActivityLog", b =>
-                {
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "ActorUser")
-                        .WithMany("OrganizationActivityLogs")
-                        .HasForeignKey("ActorUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.Organization", "Organization")
-                        .WithMany("ActivityLogs")
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("ActorUser");
-
-                    b.Navigation("Organization");
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationInvitation", b =>
-                {
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "InvitedByUser")
-                        .WithMany("SentOrganizationInvitations")
-                        .HasForeignKey("InvitedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "InvitedUser")
-                        .WithMany("ReceivedOrganizationInvitations")
-                        .HasForeignKey("InvitedUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.Organization", "Organization")
-                        .WithMany("Invitations")
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "RevokedByUser")
-                        .WithMany("RevokedOrganizationInvitations")
-                        .HasForeignKey("RevokedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("InvitedByUser");
-
-                    b.Navigation("InvitedUser");
-
-                    b.Navigation("Organization");
-
-                    b.Navigation("RevokedByUser");
-                });
-
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationMember", b =>
                 {
                     b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "AddedByUser")
@@ -1433,17 +1207,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                     b.Navigation("Organization");
 
                     b.Navigation("User");
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationSettings", b =>
-                {
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.Organization", "Organization")
-                        .WithOne("Settings")
-                        .HasForeignKey("AI.DocumentAssistant.Domain.Entities.OrganizationSettings", "OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.RefreshToken", b =>
@@ -1472,31 +1235,6 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Folder");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.UserNotification", b =>
-                {
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.OrganizationInvitation", "RelatedInvitation")
-                        .WithMany("Notifications")
-                        .HasForeignKey("RelatedInvitationId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.Organization", "RelatedOrganization")
-                        .WithMany("Notifications")
-                        .HasForeignKey("RelatedOrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("AI.DocumentAssistant.Domain.Entities.User", "User")
-                        .WithMany("Notifications")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("RelatedInvitation");
-
-                    b.Navigation("RelatedOrganization");
 
                     b.Navigation("User");
                 });
@@ -1567,20 +1305,7 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.Organization", b =>
                 {
-                    b.Navigation("ActivityLogs");
-
-                    b.Navigation("Invitations");
-
                     b.Navigation("Members");
-
-                    b.Navigation("Notifications");
-
-                    b.Navigation("Settings");
-                });
-
-            modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.OrganizationInvitation", b =>
-                {
-                    b.Navigation("Notifications");
                 });
 
             modelBuilder.Entity("AI.DocumentAssistant.Domain.Entities.User", b =>
@@ -1605,21 +1330,11 @@ namespace AI.DocumentAssistant.Infrastructure.Migrations
 
                     b.Navigation("FolderRules");
 
-                    b.Navigation("Notifications");
-
-                    b.Navigation("OrganizationActivityLogs");
-
                     b.Navigation("OrganizationMemberships");
 
                     b.Navigation("QuotaOverrides");
 
-                    b.Navigation("ReceivedOrganizationInvitations");
-
                     b.Navigation("RefreshTokens");
-
-                    b.Navigation("RevokedOrganizationInvitations");
-
-                    b.Navigation("SentOrganizationInvitations");
 
                     b.Navigation("UsageRecords");
                 });

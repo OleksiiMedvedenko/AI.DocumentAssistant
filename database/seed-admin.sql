@@ -1,0 +1,49 @@
+IF NOT EXISTS (SELECT 1 FROM [Users] WHERE [Email] = 'admin@gmail.com')
+BEGIN
+    INSERT INTO [Users]
+    (
+        [Id],
+        [Email],
+        [PasswordHash],
+        [CreatedAtUtc],
+        [DisplayName],
+        [Role],
+        [IsActive],
+        [EmailConfirmed],
+        [EmailConfirmedAtUtc],
+        [EmailConfirmationTokenHash],
+        [EmailConfirmationTokenExpiresAtUtc],
+        [EmailConfirmationSentAtUtc],
+        [AuthProvider],
+        [ExternalProviderId],
+        [HasUnlimitedAiUsage],
+        [MonthlyChatMessageLimit],
+        [MonthlyDocumentUploadLimit],
+        [MonthlySummarizationLimit],
+        [MonthlyExtractionLimit],
+        [MonthlyComparisonLimit]
+    )
+    VALUES
+    (
+        NEWID(),
+        'admin@gmail.com',
+        '$2a$10$.ealryVWBf27y7mUdt5gruEVDtd8V1d2FOMER3ehswUpskgrQtQIG',
+        SYSUTCDATETIME(),
+        'System Admin',
+        1,
+        1,
+        1,
+        SYSUTCDATETIME(),
+        NULL,
+        NULL,
+        NULL,
+        0,
+        NULL,
+        1,
+        100000,
+        100000,
+        100000,
+        100000,
+        100000
+    );
+END

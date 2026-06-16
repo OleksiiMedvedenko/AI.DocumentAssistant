@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.API.Contracts.Admin;
+using AI.DocumentAssistant.API.Contracts.Admin;
 using AI.DocumentAssistant.Application.Common.Exceptions;
 using AI.DocumentAssistant.Domain.Entities;
 using AI.DocumentAssistant.Domain.Enums;
@@ -135,7 +135,7 @@ public sealed class AdminUsersController : ControllerBase
             throw new NotFoundException("User was not found.");
         }
 
-        if (!Enum.TryParse<UserRole>(request.Role, true, out var role))
+        if (!Enum.TryParse<UserRole>(request.Role, true, out var role) || !Enum.IsDefined(role))
         {
             throw new BadRequestException("Invalid role.");
         }

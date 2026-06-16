@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Domain.Enums;
+using AI.DocumentAssistant.Domain.Enums;
 
 namespace AI.DocumentAssistant.Domain.Entities;
 
@@ -8,6 +8,7 @@ public sealed class User
     public string Email { get; set; } = default!;
     public string PasswordHash { get; set; } = default!;
     public string? DisplayName { get; set; }
+    public string PreferredLanguage { get; set; } = "en";
     public UserRole Role { get; set; } = UserRole.User;
     public bool IsActive { get; set; } = true;
     public bool EmailConfirmed { get; set; }
@@ -36,4 +37,12 @@ public sealed class User
     public ICollection<AiActionRun> AiActionRuns { get; set; } = new List<AiActionRun>();
     public ICollection<DocumentIntelligenceSnapshot> DocumentIntelligenceSnapshots { get; set; } = new List<DocumentIntelligenceSnapshot>();
     public ICollection<FolderEmbeddingProfile> FolderEmbeddingProfiles { get; set; } = new List<FolderEmbeddingProfile>();
+    public ICollection<Organization> CreatedOrganizations { get; set; } = new List<Organization>();
+    public ICollection<OrganizationMember> OrganizationMemberships { get; set; } = new List<OrganizationMember>();
+    public ICollection<OrganizationMember> AddedOrganizationMembers { get; set; } = new List<OrganizationMember>();
+    public ICollection<OrganizationInvitation> ReceivedOrganizationInvitations { get; set; } = new List<OrganizationInvitation>();
+    public ICollection<OrganizationInvitation> SentOrganizationInvitations { get; set; } = new List<OrganizationInvitation>();
+    public ICollection<OrganizationInvitation> RevokedOrganizationInvitations { get; set; } = new List<OrganizationInvitation>();
+    public ICollection<UserNotification> Notifications { get; set; } = new List<UserNotification>();
+    public ICollection<OrganizationActivityLog> OrganizationActivityLogs { get; set; } = new List<OrganizationActivityLog>();
 }

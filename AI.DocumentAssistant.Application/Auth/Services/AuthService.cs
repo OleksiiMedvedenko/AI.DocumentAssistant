@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Application.Abstractions.Authentication;
+using AI.DocumentAssistant.Application.Abstractions.Authentication;
 using AI.DocumentAssistant.Application.Abstractions.Common;
 using AI.DocumentAssistant.Application.Abstractions.Communication;
 using AI.DocumentAssistant.Application.Abstractions.Usage;
@@ -83,7 +83,8 @@ public sealed class AuthService
             EmailConfirmationTokenHash = ComputeSha256(rawToken),
             EmailConfirmationTokenExpiresAtUtc = now.AddHours(_emailConfirmationOptions.TokenLifetimeHours),
             EmailConfirmationSentAtUtc = now,
-            HasUnlimitedAiUsage = false
+            HasUnlimitedAiUsage = false,
+            PreferredLanguage = NormalizePreferredLanguage(dto.Language)
         };
 
         _dbContext.Users.Add(user);
@@ -309,6 +310,37 @@ public sealed class AuthService
             Id = user.Id,
             Email = user.Email,
             DisplayName = user.DisplayName,
+            PreferredLanguage = NormalizePreferredLanguage(user.PreferredLanguage),
+            Role = user.Role,
+            IsActive = user.IsActive,
+            AuthProvider = user.AuthProvider,
+            CreatedAtUtc = user.CreatedAtUtc,
+            UsageSummary = usageSummary
+        };
+    }
+
+    public async Task<CurrentUserDto> UpdateCurrentUserPreferredLanguageAsync(string language, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.GetUserId();
+        var user = await _dbContext.Users
+            .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken);
+
+        if (user is null || !user.IsActive)
+        {
+            throw new UnauthorizedException("AUTH_NOT_AUTHENTICATED");
+        }
+
+        user.PreferredLanguage = NormalizePreferredLanguage(language);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var usageSummary = await _usageQuotaService.GetMyUsageSummaryAsync(user.Id, cancellationToken);
+
+        return new CurrentUserDto
+        {
+            Id = user.Id,
+            Email = user.Email,
+            DisplayName = user.DisplayName,
+            PreferredLanguage = user.PreferredLanguage,
             Role = user.Role,
             IsActive = user.IsActive,
             AuthProvider = user.AuthProvider,
@@ -464,5 +496,24 @@ public sealed class AuthService
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(bytes);
+    }
+
+    private static string NormalizePreferredLanguage(string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language))
+        {
+            return "en";
+        }
+
+        var normalized = language.Trim().ToLowerInvariant();
+
+        return normalized switch
+        {
+            "pl" => "pl",
+            "en" => "en",
+            "ua" => "ua",
+            "uk" => "ua",
+            _ => "en"
+        };
     }
 }

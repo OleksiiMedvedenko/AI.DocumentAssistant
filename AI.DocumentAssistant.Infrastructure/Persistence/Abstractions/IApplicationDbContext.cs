@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace AI.DocumentAssistant.Infrastructure.Persistence.Abstractions
@@ -15,6 +15,12 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Abstractions
         DbSet<ExtractedData> ExtractedData { get; }
         DbSet<UserUsageRecord> UserUsageRecords { get; }
         DbSet<UserQuotaOverride> UserQuotaOverrides { get; }
+        DbSet<Organization> Organizations { get; }
+        DbSet<OrganizationMember> OrganizationMembers { get; }
+        DbSet<OrganizationSettings> OrganizationSettings { get; }
+        DbSet<OrganizationInvitation> OrganizationInvitations { get; }
+        DbSet<UserNotification> UserNotifications { get; }
+        DbSet<OrganizationActivityLog> OrganizationActivityLogs { get; }
 
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }

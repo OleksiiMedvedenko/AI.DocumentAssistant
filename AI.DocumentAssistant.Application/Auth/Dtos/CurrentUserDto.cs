@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Application.Usage.Dtos;
+using AI.DocumentAssistant.Application.Usage.Dtos;
 using AI.DocumentAssistant.Domain.Enums;
 
 namespace AI.DocumentAssistant.Application.Auth.Dtos;
@@ -10,6 +10,8 @@ public sealed class CurrentUserDto
     public string Email { get; set; } = default!;
 
     public string? DisplayName { get; set; }
+
+    public string PreferredLanguage { get; set; } = "en";
 
     public UserRole Role { get; set; }
 

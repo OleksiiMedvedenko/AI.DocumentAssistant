@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.Domain.Entities;
+using AI.DocumentAssistant.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -13,6 +13,10 @@ namespace AI.DocumentAssistant.Infrastructure.Persistence.Configurations
             builder.Property(x => x.Email).HasMaxLength(256).IsRequired();
             builder.HasIndex(x => x.Email).IsUnique();
             builder.Property(x => x.PasswordHash).IsRequired();
+            builder.Property(x => x.PreferredLanguage)
+                .HasMaxLength(5)
+                .IsRequired()
+                .HasDefaultValue("en");
         }
     }
 }

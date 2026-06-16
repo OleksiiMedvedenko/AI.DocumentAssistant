@@ -1,4 +1,4 @@
-﻿using AI.DocumentAssistant.API.Contracts.Auth;
+using AI.DocumentAssistant.API.Contracts.Auth;
 using AI.DocumentAssistant.Application.Auth.Dtos;
 using AI.DocumentAssistant.Application.Auth.Services;
 using AI.DocumentAssistant.Application.Usage.Dtos;
@@ -116,6 +116,39 @@ public sealed class AuthController : ControllerBase
             Id = result.Id,
             Email = result.Email,
             DisplayName = result.DisplayName,
+            PreferredLanguage = result.PreferredLanguage,
+            Role = result.Role.ToString(),
+            IsActive = result.IsActive,
+            AuthProvider = result.AuthProvider.ToString(),
+            CreatedAtUtc = result.CreatedAtUtc,
+            Usage = new CurrentUserUsageResponse
+            {
+                HasUnlimitedAiUsage = result.UsageSummary.HasUnlimitedAiUsage,
+                ChatMessages = Map(result.UsageSummary.ChatMessages),
+                DocumentUploads = Map(result.UsageSummary.DocumentUploads),
+                Summarizations = Map(result.UsageSummary.Summarizations),
+                Extractions = Map(result.UsageSummary.Extractions),
+                Comparisons = Map(result.UsageSummary.Comparisons)
+            }
+        });
+    }
+
+    [Authorize]
+    [HttpPatch("me/language")]
+    public async Task<IActionResult> UpdatePreferredLanguage(
+        UpdatePreferredLanguageRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _authService.UpdateCurrentUserPreferredLanguageAsync(
+            request.Language,
+            cancellationToken);
+
+        return Ok(new CurrentUserResponse
+        {
+            Id = result.Id,
+            Email = result.Email,
+            DisplayName = result.DisplayName,
+            PreferredLanguage = result.PreferredLanguage,
             Role = result.Role.ToString(),
             IsActive = result.IsActive,
             AuthProvider = result.AuthProvider.ToString(),
